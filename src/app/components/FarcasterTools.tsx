@@ -95,7 +95,7 @@ export function FarcasterTools() {
 
   const handleUnfollowAll = async () => {
     if (!signerData) {
-      setUnfollowMessage('❌ Please connect your wallet first');
+      setUnfollowMessage('❌ Signer data not found');
       return;
     }
 
@@ -184,7 +184,7 @@ export function FarcasterTools() {
 
   const handleRefollowAll = async () => {
     if (!signerData) {
-      setRefollowMessage('❌ Please connect your wallet first');
+      setRefollowMessage('❌ Signer data not found');
       return;
     }
 
@@ -268,7 +268,7 @@ export function FarcasterTools() {
 
   const handleBackup = async () => {
     if (!signerData) {
-      setBackupMessage('❌ Please connect your wallet first');
+      setBackupMessage('❌ Signer data not found');
       return;
     }
 
@@ -427,7 +427,7 @@ export function FarcasterTools() {
 
   const handleFollowFids = async () => {
     if (!signerData) {
-      setFollowFidsMessage('❌ Please connect your wallet first');
+      setFollowFidsMessage('❌ Signer data not found');
       return;
     }
 
@@ -590,6 +590,79 @@ export function FarcasterTools() {
 
 
 
+  // Show signer required message when wallet is connected but no signer data
+  if (isConnected && !signerData) {
+    return (
+      <div className="space-y-6">
+        {/* Preview of main interface (disabled) */}
+        <Card className="opacity-50">
+          <CardContent className="space-y-6 pt-6">
+            {/* Step 1: Backup */}
+            <div className="space-y-4">
+              <Button
+                disabled
+                variant="default"
+                size="lg"
+                className="w-full bg-green-600 hover:bg-green-700 text-white border-green-600 hover:border-green-700"
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Create Backup
+              </Button>
+            </div>
+
+            {/* Step 2: Unfollow ALL */}
+            <div className="space-y-4">
+              <Button
+                disabled
+                variant="destructive"
+                size="lg"
+                className="w-full"
+              >
+                <UserMinus className="h-4 w-4 mr-2" />
+                Unfollow ALL
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Signer requirement card */}
+        <Card>
+          <CardContent className="space-y-6 pt-6">
+            <div className="text-center space-y-4">
+              <div className="flex justify-center">
+                <AlertCircle className="h-12 w-12 text-orange-500" />
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-lg font-semibold text-gray-900">Signer Required</h3>
+                <p className="text-sm text-gray-600">
+                  This app requires a compusophy signer to manage your Farcaster following.
+                </p>
+              </div>
+              <Button
+                onClick={() => {
+                  sdk.actions.openMiniApp({
+                    url: 'https://farcaster.xyz/miniapps/QKe6PvOqtlqH/compusophy-signer'
+                  });
+                }}
+                variant="default"
+                size="lg"
+                className="w-full"
+              >
+                <Users className="h-4 w-4 mr-2" />
+                Get compusophy Signer
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // Show nothing when not connected
+  if (!isConnected) {
+    return null;
+  }
+
   return (
     <>
       {/* Loading overlay for long operations */}
@@ -608,7 +681,7 @@ export function FarcasterTools() {
       <div className="space-y-6">
         {/* 3-Step Flow Card */}
         <Card>
-                    <CardContent className="space-y-6 pt-6">
+          <CardContent className="space-y-6 pt-6">
             {/* Step 1: Backup */}
             <div className="space-y-4">
               
