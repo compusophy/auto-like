@@ -146,4 +146,78 @@ export async function getSignerByFid(fid: string): Promise<Signer | null> {
   } catch {
     return null;
   }
+}
+
+// Store backup data for a user
+export async function storeBackupData(ethAddress: string, accounts: any[]): Promise<void> {
+  try {
+    const key = `backup_${ethAddress}`;
+    const backupData = {
+      accounts,
+      createdAt: Date.now(),
+      count: accounts.length
+    };
+    
+    console.log('💾 Storing backup data for:', ethAddress, 'with', accounts.length, 'accounts');
+    await redisServer.set(key, JSON.stringify(backupData));
+    console.log('✅ Backup data stored successfully');
+  } catch (error) {
+    console.error('❌ Error storing backup data:', error);
+    throw error;
+  }
+}
+
+// Get backup data for a user
+export async function getBackupData(ethAddress: string): Promise<any[] | null> {
+  try {
+    const key = `backup_${ethAddress}`;
+    const stored = await redisServer.get(key);
+    
+    if (!stored) {
+      return null;
+    }
+    
+    const backupData = typeof stored === 'string' ? JSON.parse(stored) : stored;
+    return backupData.accounts || null;
+  } catch (error) {
+    console.error('❌ Error retrieving backup data:', error);
+    return null;
+  }
+}
+
+// Store unfollowed accounts for a user
+export async function storeUnfollowedAccounts(ethAddress: string, accounts: any[]): Promise<void> {
+  try {
+    const key = `unfollowed_${ethAddress}`;
+    const unfollowedData = {
+      accounts,
+      unfollowedAt: Date.now(),
+      count: accounts.length
+    };
+    
+    console.log('💾 Storing unfollowed accounts for:', ethAddress, 'with', accounts.length, 'accounts');
+    await redisServer.set(key, JSON.stringify(unfollowedData));
+    console.log('✅ Unfollowed accounts stored successfully');
+  } catch (error) {
+    console.error('❌ Error storing unfollowed accounts:', error);
+    throw error;
+  }
+}
+
+// Get unfollowed accounts for a user
+export async function getUnfollowedAccounts(ethAddress: string): Promise<any[] | null> {
+  try {
+    const key = `unfollowed_${ethAddress}`;
+    const stored = await redisServer.get(key);
+    
+    if (!stored) {
+      return null;
+    }
+    
+    const unfollowedData = typeof stored === 'string' ? JSON.parse(stored) : stored;
+    return unfollowedData.accounts || null;
+  } catch (error) {
+    console.error('❌ Error retrieving unfollowed accounts:', error);
+    return null;
+  }
 } 

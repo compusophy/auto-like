@@ -5,6 +5,10 @@ import { useAccount, useConnect } from 'wagmi';
 import { getSignerByEthAddress } from '../lib/redis-read';
 import type { Signer } from '../lib/types';
 import { ConfirmModal } from './ConfirmModal';
+import { Button } from '../../components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '../../components/ui/dialog';
+import { Settings, Wallet, Database, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -21,25 +25,6 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [deleting, setDeleting] = useState(false);
   const [deleteMessage, setDeleteMessage] = useState<string | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-
-  // Close modal on escape key
-  useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
-        onClose();
-      }
-    };
-
-    if (isOpen) {
-      document.addEventListener('keydown', handleEscape);
-      document.body.style.overflow = 'hidden';
-    }
-
-    return () => {
-      document.removeEventListener('keydown', handleEscape);
-      document.body.style.overflow = 'unset';
-    };
-  }, [isOpen, onClose]);
 
   // Load signer data when connected
   useEffect(() => {
@@ -122,150 +107,167 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     }
   };
 
-  if (!isOpen) return null;
-
   return (
     <>
-      {/* Backdrop */}
-      <div 
-        className="fixed inset-0 bg-black bg-opacity-50 z-40" 
-        onClick={onClose}
-      />
-      
-      {/* Modal */}
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="bg-gray-900 border border-gray-700 rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
-          {/* Header */}
-          <div className="px-6 py-4 border-b border-gray-700 flex justify-between items-center">
-            <h3 className="text-lg font-semibold text-white font-mono">
+      <Dialog open={isOpen} onOpenChange={onClose}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Settings className="h-5 w-5" />
               Settings & Database Status
-            </h3>
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-white text-xl"
-            >
-              ×
-            </button>
-          </div>
+            </DialogTitle>
+            <DialogDescription>
+              Manage your wallet connection and database settings
+            </DialogDescription>
+          </DialogHeader>
           
-          {/* Body */}
-          <div className="px-6 py-4">
+          <div className="space-y-6">
             {/* Wallet Connection */}
-            <div className="mb-6">
-              <h4 className="text-md font-semibold text-white mb-3">Wallet Connection</h4>
-              {isConnected ? (
-                <div className="bg-gray-800 rounded p-3">
-                  <p className="text-green-400 text-sm mb-2">✅ Connected</p>
-                  <p className="text-gray-300 text-xs break-all">{address}</p>
-                </div>
-              ) : (
-                <div className="bg-gray-800 rounded p-3">
-                  <p className="text-red-400 text-sm mb-3">❌ Not Connected</p>
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Wallet className="h-5 w-5" />
+                  Wallet Connection
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {isConnected ? (
                   <div className="space-y-2">
-                    {connectors.map((connector) => (
-                      <button
-                        key={connector.uid}
-                        onClick={() => connect({ connector })}
-                        className="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm py-2 px-3 rounded"
-                      >
-                        Connect {connector.name}
-                      </button>
-                    ))}
+                    <div className="flex items-center gap-2 text-green-600">
+                      <CheckCircle className="h-4 w-4" />
+                      <span className="text-sm font-medium">Connected</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground break-all">{address}</p>
                   </div>
-                </div>
-              )}
-            </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-red-600">
+                      <XCircle className="h-4 w-4" />
+                      <span className="text-sm font-medium">Not Connected</span>
+                    </div>
+                    <div className="space-y-2">
+                      {connectors.map((connector) => (
+                        <Button
+                          key={connector.uid}
+                          onClick={() => connect({ connector })}
+                          variant="outline"
+                          size="sm"
+                          className="w-full"
+                        >
+                          Connect {connector.name}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
             {/* Database Status */}
             {isConnected && (
-              <div className="mb-6">
-                <h4 className="text-md font-semibold text-white mb-3">Database Status</h4>
-                
-                {loading ? (
-                  <div className="bg-gray-800 rounded p-3">
-                    <p className="text-gray-400 text-sm">Loading signer data...</p>
-                  </div>
-                ) : signer ? (
-                  <div className="bg-gray-800 rounded p-3 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-300 text-sm">Status:</span>
-                      <span className={`px-2 py-1 rounded text-xs ${
-                        signer.isValidated 
-                          ? 'bg-green-100 text-green-800' 
-                          : signer.isPending 
-                            ? 'bg-yellow-100 text-yellow-800' 
-                            : 'bg-red-100 text-red-800'
-                      }`}>
-                        {signer.isValidated ? 'Validated' : signer.isPending ? 'Pending' : 'Not Validated'}
-                      </span>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Database className="h-5 w-5" />
+                    Database Status
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {loading ? (
+                    <div className="flex items-center gap-2">
+                      <AlertCircle className="h-4 w-4 animate-spin" />
+                      <span className="text-sm">Loading signer data...</span>
                     </div>
-                    
-                    {/* Action Buttons */}
-                    <div className="flex space-x-3">
-                      <button
-                        onClick={handleValidate}
-                        disabled={validating}
-                        className={`px-3 py-1 rounded text-sm font-medium ${
-                          validating
-                            ? 'bg-blue-300 text-blue-700 cursor-wait'
-                            : signer.isValidated
-                            ? 'bg-orange-500 hover:bg-orange-700 text-white'
-                            : 'bg-green-500 hover:bg-green-700 text-white'
-                        }`}
-                      >
-                        {validating ? 'Validating...' : signer.isValidated ? 'Revalidate' : 'Validate'}
-                      </button>
+                  ) : signer ? (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm">Status:</span>
+                        <div className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${
+                          signer.isValidated 
+                            ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' 
+                            : signer.isPending 
+                              ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' 
+                              : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+                        }`}>
+                          {signer.isValidated ? (
+                            <>
+                              <CheckCircle className="h-3 w-3" />
+                              Validated
+                            </>
+                          ) : signer.isPending ? (
+                            <>
+                              <AlertCircle className="h-3 w-3" />
+                              Pending
+                            </>
+                          ) : (
+                            <>
+                              <XCircle className="h-3 w-3" />
+                              Not Validated
+                            </>
+                          )}
+                        </div>
+                      </div>
                       
-                      <button
-                        onClick={handleDelete}
-                        disabled={deleting}
-                        className={`px-3 py-1 rounded text-sm font-medium ${
-                          deleting
-                            ? 'bg-red-300 text-red-700 cursor-wait'
-                            : 'bg-red-500 hover:bg-red-700 text-white'
-                        }`}
-                      >
-                        {deleting ? 'Deleting...' : 'Delete'}
-                      </button>
+                      {/* Action Buttons */}
+                      <div className="flex space-x-3">
+                        <Button
+                          onClick={handleValidate}
+                          disabled={validating}
+                          variant={signer.isValidated ? "outline" : "default"}
+                          size="sm"
+                        >
+                          {validating ? 'Validating...' : signer.isValidated ? 'Revalidate' : 'Validate'}
+                        </Button>
+                        
+                        <Button
+                          onClick={handleDelete}
+                          disabled={deleting}
+                          variant="destructive"
+                          size="sm"
+                        >
+                          {deleting ? 'Deleting...' : 'Delete'}
+                        </Button>
+                      </div>
+                      
+                      {/* Messages */}
+                      {validationMessage && (
+                        <p className={`text-xs ${
+                          validationMessage.startsWith('✅') ? 'text-green-600' : 'text-red-600'
+                        }`}>
+                          {validationMessage}
+                        </p>
+                      )}
+                      
+                      {deleteMessage && (
+                        <p className={`text-xs ${
+                          deleteMessage.startsWith('✅') ? 'text-green-600' : 'text-red-600'
+                        }`}>
+                          {deleteMessage}
+                        </p>
+                      )}
+                      
+                      {/* Raw Data */}
+                      <details className="mt-3">
+                        <summary className="text-xs cursor-pointer hover:text-foreground text-muted-foreground">
+                          Raw Database Data
+                        </summary>
+                        <pre className="text-xs overflow-auto whitespace-pre-wrap break-all bg-muted p-2 rounded mt-2">
+                          {JSON.stringify(signer, null, 2)}
+                        </pre>
+                      </details>
                     </div>
-                    
-                    {/* Messages */}
-                    {validationMessage && (
-                      <p className={`text-xs ${
-                        validationMessage.startsWith('✅') ? 'text-green-400' : 'text-red-400'
-                      }`}>
-                        {validationMessage}
-                      </p>
-                    )}
-                    
-                    {deleteMessage && (
-                      <p className={`text-xs ${
-                        deleteMessage.startsWith('✅') ? 'text-green-400' : 'text-red-400'
-                      }`}>
-                        {deleteMessage}
-                      </p>
-                    )}
-                    
-                    {/* Raw Data */}
-                    <details className="mt-3">
-                      <summary className="text-gray-400 text-xs cursor-pointer hover:text-white">
-                        Raw Database Data
-                      </summary>
-                      <pre className="text-xs overflow-auto whitespace-pre-wrap break-all bg-gray-900 p-2 rounded mt-2">
-                        {JSON.stringify(signer, null, 2)}
-                      </pre>
-                    </details>
-                  </div>
-                ) : (
-                  <div className="bg-gray-800 rounded p-3">
-                    <p className="text-gray-400 text-sm">No signer data found for this address</p>
-                  </div>
-                )}
-              </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                      <XCircle className="h-4 w-4" />
+                      <span className="text-sm">No signer data found for this address</span>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             )}
           </div>
-        </div>
-      </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete Confirmation Modal */}
       <ConfirmModal
@@ -276,7 +278,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         message="Are you sure you want to delete this signer? This action cannot be undone."
         confirmText="Delete"
         cancelText="Cancel"
-        confirmClassName="bg-red-600 hover:bg-red-700"
+        confirmVariant="destructive"
         isLoading={deleting}
       />
     </>
