@@ -9,10 +9,10 @@ export async function GET() {
 
   const config = {
     accountAssociation: {
-      header: "eyJmaWQiOjM1MDkxMSwidHlwZSI6ImN1c3RvZHkiLCJrZXkiOiIweDJGREVmM0Y0NzBlQ2QyQmM5YTk3NzU2OEM0M0FEMzg2MGMxNjExRDgifQ",
-      payload: "eyJkb21haW4iOiJjb21wdS1jb21wdXNvcGh5LXNpZ25lci52ZXJjZWwuYXBwIn0",
-      signature: "MHgxNWY5NjZkNWMxMDMxMTI2MmFiM2E3NmVjYTJlOWMyYjBiOWRhZTk1MjIyOWMwZGVmZjZjNzY0Yjg5YThkODQ0NmFmZjcxYWNiZGIyZDgwOTdkZDAyODliYzU1MmJjY2E5MDAwNzU1YWQ0YWMyMmEwMDE0YTc2ZjcxYjg1Y2QyZjFi"
-    },
+    header: "eyJmaWQiOjM1MDkxMSwidHlwZSI6ImN1c3RvZHkiLCJrZXkiOiIweDJGREVmM0Y0NzBlQ2QyQmM5YTk3NzU2OEM0M0FEMzg2MGMxNjExRDgifQ",
+    payload: "eyJkb21haW4iOiJjb21wdS1jb21wdXNvcGh5LnZlcmNlbC5hcHAifQ",
+    signature: "MHg4Y2IyMjRiNjkyNzZlYzkyZDA2MmJjMTZlMTQ4NGM0ZDFkZDBlODFlY2Q2NTAxNmQ3OGUxOWM2NTAxNTAyNGUwNjU4MGY2MzQ1NWI3MjY1OTQwMWFmMDI2M2E1OGNmZjcxZGEyYWU0ODA4ZWYzZWZiNzQyMzE0MjI0N2I0OTk0YzFj"
+  },
     frame: {
       version: "1",
       name: frameName,
