@@ -8,7 +8,7 @@ import { ConfirmModal } from './ConfirmModal';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '../../components/ui/dialog';
-import { Settings, Wallet, Database, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { Settings, Wallet, Database, CheckCircle, XCircle, AlertCircle, Loader2 } from 'lucide-react';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -114,44 +114,41 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Settings className="h-5 w-5" />
-              Settings & Database Status
+              Settings
             </DialogTitle>
-            <DialogDescription>
-              Manage your wallet connection and database settings
-            </DialogDescription>
           </DialogHeader>
           
           <div className="space-y-6">
             {/* Wallet Connection */}
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Wallet className="h-5 w-5" />
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Wallet className="h-4 w-4" />
                   Wallet Connection
-                </CardTitle>
+                </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-4">
                 {isConnected ? (
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     <div className="flex items-center gap-2 text-green-600">
                       <CheckCircle className="h-4 w-4" />
                       <span className="text-sm font-medium">Connected</span>
                     </div>
-                    <p className="text-xs text-muted-foreground break-all">{address}</p>
+                    <p className="text-xs text-muted-foreground break-all bg-muted p-2 rounded">{address}</p>
                   </div>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     <div className="flex items-center gap-2 text-red-600">
                       <XCircle className="h-4 w-4" />
                       <span className="text-sm font-medium">Not Connected</span>
                     </div>
-                    <div className="space-y-2">
+                    <div className="space-y-3">
                       {connectors.map((connector) => (
                         <Button
                           key={connector.uid}
                           onClick={() => connect({ connector })}
                           variant="outline"
-                          size="sm"
+                          size="lg"
                           className="w-full"
                         >
                           Connect {connector.name}
@@ -167,22 +164,22 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             {isConnected && (
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Database className="h-5 w-5" />
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Database className="h-4 w-4" />
                     Database Status
-                  </CardTitle>
+                  </div>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-6">
                   {loading ? (
                     <div className="flex items-center gap-2">
-                      <AlertCircle className="h-4 w-4 animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin" />
                       <span className="text-sm">Loading signer data...</span>
                     </div>
                   ) : signer ? (
-                    <div className="space-y-4">
+                    <div className="space-y-6">
                       <div className="flex items-center justify-between">
-                        <span className="text-sm">Status:</span>
-                        <div className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${
+                        <span className="text-sm font-medium">Status:</span>
+                        <div className={`flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium ${
                           signer.isValidated 
                             ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' 
                             : signer.isPending 
@@ -209,57 +206,83 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                       </div>
                       
                       {/* Action Buttons */}
-                      <div className="flex space-x-3">
+                      <div className="flex flex-col gap-3">
                         <Button
                           onClick={handleValidate}
                           disabled={validating}
                           variant={signer.isValidated ? "outline" : "default"}
-                          size="sm"
+                          size="lg"
+                          className="w-full"
                         >
-                          {validating ? 'Validating...' : signer.isValidated ? 'Revalidate' : 'Validate'}
+                          {validating ? (
+                            <>
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              Validating...
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle className="h-4 w-4 mr-2" />
+                              {signer.isValidated ? 'Revalidate' : 'Validate'}
+                            </>
+                          )}
                         </Button>
                         
                         <Button
                           onClick={handleDelete}
                           disabled={deleting}
                           variant="destructive"
-                          size="sm"
+                          size="lg"
+                          className="w-full"
                         >
-                          {deleting ? 'Deleting...' : 'Delete'}
+                          {deleting ? (
+                            <>
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              Deleting...
+                            </>
+                          ) : (
+                            <>
+                              <XCircle className="h-4 w-4 mr-2" />
+                              Delete
+                            </>
+                          )}
                         </Button>
                       </div>
                       
                       {/* Messages */}
                       {validationMessage && (
-                        <p className={`text-xs ${
-                          validationMessage.startsWith('✅') ? 'text-green-600' : 'text-red-600'
+                        <div className={`p-3 rounded-lg text-sm ${
+                          validationMessage.startsWith('✅') 
+                            ? 'bg-green-50 text-green-800 border border-green-200' 
+                            : 'bg-red-50 text-red-800 border border-red-200'
                         }`}>
                           {validationMessage}
-                        </p>
+                        </div>
                       )}
                       
                       {deleteMessage && (
-                        <p className={`text-xs ${
-                          deleteMessage.startsWith('✅') ? 'text-green-600' : 'text-red-600'
+                        <div className={`p-3 rounded-lg text-sm ${
+                          deleteMessage.startsWith('✅') 
+                            ? 'bg-green-50 text-green-800 border border-green-200' 
+                            : 'bg-red-50 text-red-800 border border-red-200'
                         }`}>
                           {deleteMessage}
-                        </p>
+                        </div>
                       )}
                       
                       {/* Raw Data */}
-                      <details className="mt-3">
-                        <summary className="text-xs cursor-pointer hover:text-foreground text-muted-foreground">
+                      <details className="mt-4">
+                        <summary className="text-xs cursor-pointer hover:text-foreground text-muted-foreground font-medium">
                           Raw Database Data
                         </summary>
-                        <pre className="text-xs overflow-auto whitespace-pre-wrap break-all bg-muted p-2 rounded mt-2">
+                        <pre className="mt-2 p-3 bg-muted rounded text-xs overflow-auto">
                           {JSON.stringify(signer, null, 2)}
                         </pre>
                       </details>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-2 text-muted-foreground">
+                    <div className="flex items-center gap-2 text-red-600">
                       <XCircle className="h-4 w-4" />
-                      <span className="text-sm">No signer data found for this address</span>
+                      <span className="text-sm">No signer data found</span>
                     </div>
                   )}
                 </CardContent>
@@ -275,8 +298,8 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         onClose={() => setShowDeleteModal(false)}
         onConfirm={confirmDelete}
         title="Delete Signer"
-        message="Are you sure you want to delete this signer? This action cannot be undone."
-        confirmText="Delete"
+        message="Are you sure you want to delete your signer data? This will remove all your Farcaster authentication data from the database."
+        confirmText="Delete Signer"
         cancelText="Cancel"
         confirmVariant="destructive"
         isLoading={deleting}

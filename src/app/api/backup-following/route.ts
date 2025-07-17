@@ -16,7 +16,96 @@ interface Following {
   verifiedAddresses?: string[];
 }
 
-// Get all following accounts with pagination
+// Get all following accounts with pagination and progress updates
+async function getAllFollowingWithProgress(sourceFid: number, sendProgress: (data: any) => void): Promise<Following[]> {
+  const allFollowing: Following[] = [];
+  let cursor: string | undefined = undefined;
+  const batchSize = 100; // Neynar API limit
+  let batchCount = 0;
+  
+  console.log(`Starting to fetch all following for FID ${sourceFid}...`);
+  
+  while (true) {
+    try {
+      batchCount++;
+      const url: string = `${NEYNAR_API_URL}/following?fid=${sourceFid}&limit=${batchSize}${cursor ? `&cursor=${cursor}` : ''}`;
+      
+      // Send progress update before fetching this batch
+      sendProgress({ 
+        type: 'progress', 
+        current: allFollowing.length, 
+        total: allFollowing.length + batchSize, 
+        message: `Fetching batch ${batchCount} (${allFollowing.length} accounts so far)...` 
+      });
+      
+      const response: Response = await fetch(url, {
+        headers: {
+          'accept': 'application/json',
+          'x-api-key': NEYNAR_API_KEY
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`API request failed: ${response.status}`);
+      }
+      
+      const data: any = await response.json();
+      
+      if (!data.users || data.users.length === 0) {
+        console.log('No more accounts to fetch');
+        break;
+      }
+      
+      console.log(`Fetched batch of ${data.users.length} accounts`);
+      
+      // Process accounts in this batch
+      for (const item of data.users) {
+        if (item && item.user && item.user.fid && typeof item.user.fid === 'number' && item.user.fid > 0) {
+          allFollowing.push({
+            fid: item.user.fid,
+            username: item.user.username || undefined,
+            displayName: item.user.display_name || undefined,
+            pfpUrl: item.user.pfp_url || undefined,
+            followerCount: item.user.follower_count || undefined,
+            followingCount: item.user.following_count || undefined,
+            verifiedAddresses: item.user.verified_addresses || undefined
+          });
+        } else if (item && item.fid && typeof item.fid === 'number' && item.fid > 0) {
+          allFollowing.push({
+            fid: item.fid,
+            username: item.username || undefined,
+            displayName: item.display_name || undefined,
+            pfpUrl: item.pfp_url || undefined,
+            followerCount: item.follower_count || undefined,
+            followingCount: item.following_count || undefined,
+            verifiedAddresses: item.verified_addresses || undefined
+          });
+        }
+      }
+      
+      // Check for next cursor
+      const nextCursor: string | undefined = data.next?.cursor || data.next_cursor;
+      if (!nextCursor) {
+        console.log('No more pages available');
+        break;
+      }
+      
+      cursor = nextCursor;
+      
+      // Add a small delay to be respectful to the API
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+    } catch (error) {
+      console.error('Error fetching following batch:', error);
+      break;
+    }
+  }
+  
+  console.log(`Total accounts fetched: ${allFollowing.length}`);
+  return allFollowing;
+}
+
+// Get all following accounts with pagination (original function for non-SSE)
 async function getAllFollowing(sourceFid: number): Promise<Following[]> {
   const allFollowing: Following[] = [];
   let cursor: string | undefined = undefined;
@@ -127,7 +216,7 @@ function convertToCSV(data: Following[]): string {
 
 export async function POST(request: NextRequest) {
   try {
-    const { signerData } = await request.json();
+    const { signerData, useSSE } = await request.json();
     
     if (!signerData || !signerData.fid) {
       return NextResponse.json({ error: 'Valid signer data is required' }, { status: 400 });
@@ -138,7 +227,75 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid FID in signer data' }, { status: 400 });
     }
     
-    // Get all following accounts
+    // If SSE is requested, return a streaming response
+    if (useSSE) {
+      const encoder = new TextEncoder();
+      
+      const stream = new ReadableStream({
+        async start(controller) {
+          const sendProgress = (data: any) => {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+          };
+          
+          // Send initial progress
+          sendProgress({ type: 'progress', current: 0, total: 0, message: 'Connecting to Farcaster API...' });
+          
+          try {
+            // Get all following accounts with progress updates
+            const following = await getAllFollowingWithProgress(sourceFid, sendProgress);
+            
+            if (following.length === 0) {
+              sendProgress({
+                type: 'complete',
+                message: 'No following accounts found',
+                count: 0,
+                csvData: ''
+              });
+              controller.close();
+              return;
+            }
+            
+            // Send progress for storing data
+            sendProgress({ type: 'progress', current: following.length, total: following.length, message: `Storing ${following.length} accounts in database...` });
+            
+            // Store backup data in Redis
+            await storeBackupData(signerData.address, following);
+            
+            // Convert to CSV for download
+            const csvData = convertToCSV(following);
+            
+            // Send final result
+            sendProgress({
+              type: 'complete',
+              message: `Successfully backed up ${following.length} following accounts`,
+              count: following.length,
+              csvData,
+              accounts: following
+            });
+            
+          } catch (error) {
+            console.error('Backup error in SSE:', error);
+            sendProgress({
+              type: 'error',
+              message: 'Failed to backup accounts',
+              error: error instanceof Error ? error.message : 'Unknown error'
+            });
+          }
+          
+          controller.close();
+        }
+      });
+      
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        },
+      });
+    }
+    
+    // Regular non-SSE processing
     const following = await getAllFollowing(sourceFid);
     
     if (following.length === 0) {

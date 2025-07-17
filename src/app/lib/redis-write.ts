@@ -1,6 +1,6 @@
 // Server-only Redis write functions (using full token)
 // NEVER import this in client-side code!
-import { redisServer } from './redis-client';
+import { redisServer, isRedisAvailable } from './redis-client';
 import type { Signer } from './types';
 
 // Store signer by ETH address (server-only)
@@ -15,6 +15,10 @@ export async function storeSignerByEthAddress(ethAddress: string, signer: Signer
       isPending: signer.isPending
     }
   });
+  
+  if (!redisServer) {
+    throw new Error('Redis not configured - cannot store signer data');
+  }
   
   try {
     const key = `signer_${ethAddress}`;
@@ -49,6 +53,10 @@ export function isSignerValid(signer: Signer | null): boolean {
 
 // Validate and update signer by ETH address (server-only)
 export async function validateSignerByEthAddress(ethAddress: string): Promise<{ isValid: boolean; signer?: Signer }> {
+  if (!redisServer) {
+    throw new Error('Redis not configured - cannot validate signer');
+  }
+  
   const stored = await redisServer.get(`signer_${ethAddress}`);
   
   if (!stored) {
@@ -73,6 +81,10 @@ export async function validateSignerByEthAddress(ethAddress: string): Promise<{ 
 // Complete signer validation by ETH address (when user approves)
 export async function completeSignerValidation(ethAddress: string, fid?: string): Promise<{ isValid: boolean; signer?: Signer }> {
   console.log('🔧 completeSignerValidation called with:', { ethAddress, fid });
+  
+  if (!redisServer) {
+    throw new Error('Redis not configured - cannot complete signer validation');
+  }
   
   const stored = await redisServer.get(`signer_${ethAddress}`);
   
@@ -119,6 +131,10 @@ export async function completeSignerValidation(ethAddress: string, fid?: string)
 
 // Delete signer by ETH address (server-only)
 export async function deleteSignerByEthAddress(ethAddress: string): Promise<{ success: boolean; message: string }> {
+  if (!redisServer) {
+    throw new Error('Redis not configured - cannot delete signer');
+  }
+  
   try {
     const deleted = await redisServer.del(`signer_${ethAddress}`);
     
@@ -137,6 +153,10 @@ export async function deleteSignerByEthAddress(ethAddress: string): Promise<{ su
 export async function getSignerByFid(fid: string): Promise<Signer | null> {
   console.log('getSignerByFid called for fid:', fid);
   
+  if (!redisServer) {
+    throw new Error('Redis not configured - cannot get signer by FID');
+  }
+  
   const stored = await redisServer.get(`signer_${fid}`);
   if (!stored) return null;
   
@@ -150,6 +170,10 @@ export async function getSignerByFid(fid: string): Promise<Signer | null> {
 
 // Store backup data for a user
 export async function storeBackupData(ethAddress: string, accounts: any[]): Promise<void> {
+  if (!redisServer) {
+    throw new Error('Redis not configured - cannot store backup data');
+  }
+  
   try {
     const key = `backup_${ethAddress}`;
     const backupData = {
@@ -169,6 +193,10 @@ export async function storeBackupData(ethAddress: string, accounts: any[]): Prom
 
 // Get backup data for a user
 export async function getBackupData(ethAddress: string): Promise<any[] | null> {
+  if (!redisServer) {
+    throw new Error('Redis not configured - cannot get backup data');
+  }
+  
   try {
     const key = `backup_${ethAddress}`;
     const stored = await redisServer.get(key);
@@ -187,6 +215,10 @@ export async function getBackupData(ethAddress: string): Promise<any[] | null> {
 
 // Store unfollowed accounts for a user
 export async function storeUnfollowedAccounts(ethAddress: string, accounts: any[]): Promise<void> {
+  if (!redisServer) {
+    throw new Error('Redis not configured - cannot store unfollowed accounts');
+  }
+  
   try {
     const key = `unfollowed_${ethAddress}`;
     const unfollowedData = {
@@ -206,6 +238,10 @@ export async function storeUnfollowedAccounts(ethAddress: string, accounts: any[
 
 // Get unfollowed accounts for a user
 export async function getUnfollowedAccounts(ethAddress: string): Promise<any[] | null> {
+  if (!redisServer) {
+    throw new Error('Redis not configured - cannot get unfollowed accounts');
+  }
+  
   try {
     const key = `unfollowed_${ethAddress}`;
     const stored = await redisServer.get(key);
@@ -218,6 +254,57 @@ export async function getUnfollowedAccounts(ethAddress: string): Promise<any[] |
     return unfollowedData.accounts || null;
   } catch (error) {
     console.error('❌ Error retrieving unfollowed accounts:', error);
+    return null;
+  }
+}
+
+// Store CSV data temporarily for download
+export async function storeCSVForDownload(csvData: string, filename: string): Promise<string> {
+  if (!redisServer) {
+    throw new Error('Redis not configured - cannot store CSV for download');
+  }
+  
+  try {
+    const downloadId = `download_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const key = `csv_download_${downloadId}`;
+    
+    const downloadData = {
+      csvData,
+      filename,
+      createdAt: Date.now()
+    };
+    
+    console.log('💾 Storing CSV for download:', downloadId);
+    await redisServer.setex(key, 3600, JSON.stringify(downloadData)); // Expire in 1 hour
+    
+    return downloadId;
+  } catch (error) {
+    console.error('❌ Error storing CSV for download:', error);
+    throw error;
+  }
+}
+
+// Get CSV data for download
+export async function getCSVForDownload(downloadId: string): Promise<{ csvData: string; filename: string } | null> {
+  if (!redisServer) {
+    throw new Error('Redis not configured - cannot get CSV for download');
+  }
+  
+  try {
+    const key = `csv_download_${downloadId}`;
+    const stored = await redisServer.get(key);
+    
+    if (!stored) {
+      return null;
+    }
+    
+    const downloadData = typeof stored === 'string' ? JSON.parse(stored) : stored;
+    return {
+      csvData: downloadData.csvData,
+      filename: downloadData.filename
+    };
+  } catch (error) {
+    console.error('❌ Error retrieving CSV for download:', error);
     return null;
   }
 } 

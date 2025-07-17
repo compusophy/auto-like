@@ -7,8 +7,9 @@ import type { SignerData } from '../lib/types';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '../../components/ui/dialog';
-import { Settings, Download, Users, UserMinus, UserPlus, Loader2, CheckCircle, AlertCircle, Upload, FileText } from 'lucide-react';
+import { Settings, Download, Users, UserMinus, UserPlus, Loader2, CheckCircle, AlertCircle, Upload, FileText, Cloud } from 'lucide-react';
 import { LoadingSpinner, LoadingOverlay } from './LoadingSpinner';
+import { ConfirmModal } from './ConfirmModal';
 import { sdk } from '@farcaster/miniapp-sdk';
 
 interface UnfollowResult {
@@ -53,6 +54,7 @@ export function FarcasterTools() {
   const [backingUp, setBackingUp] = useState(false);
   const [backupResults, setBackupResults] = useState<BackupResult | null>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
+  const [backupProgress, setBackupProgress] = useState({ current: 0, total: 0 });
 
   // Follow FIDs tool states
   const [fidsInput, setFidsInput] = useState<string>('');
@@ -61,7 +63,11 @@ export function FarcasterTools() {
   const [followFidsMessage, setFollowFidsMessage] = useState<string | null>(null);
   const [followFidsResults, setFollowFidsResults] = useState<UnfollowResult[]>([]);
 
-  // Load signer data when connected
+  // Confirmation modal states
+  const [showUnfollowConfirm, setShowUnfollowConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  // Load signer data and check for existing backup when connected
   useEffect(() => {
     if (isConnected && address) {
       getSignerByEthAddress(address)
@@ -69,10 +75,13 @@ export function FarcasterTools() {
           console.log('Fetched signer data:', signer);
           if (signer) {
             setSignerData({
-              address: signer.address,
+              address: address, // Use the address from wagmi hook
               fid: signer.fid,
               privateKey: signer.privateKey
             });
+            
+            // Check for existing backup using the address from wagmi hook
+            checkExistingBackup(address);
           }
         })
         .catch((error) => {
@@ -80,6 +89,7 @@ export function FarcasterTools() {
         });
     } else {
       setSignerData(null);
+      setBackupResults(null);
     }
   }, [isConnected, address]);
 
@@ -265,43 +275,132 @@ export function FarcasterTools() {
     setBackingUp(true);
     setBackupMessage(null);
     setBackupResults(null);
+    setBackupProgress({ current: 0, total: 0 });
 
     try {
+      // Use Server-Sent Events for real-time progress
       const response = await fetch('/api/backup-following', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ signerData }),
+        body: JSON.stringify({
+          signerData,
+          useSSE: true
+        }),
       });
 
-      const result = await response.json();
-
-      if (response.ok) {
-        setBackupMessage(`✅ ${result.message}`);
-        setBackupResults(result);
-      } else {
-        setBackupMessage(`❌ ${result.error || 'Failed to backup following'}`);
+      if (!response.ok) {
+        const errorData = await response.json();
+        setBackupMessage(`❌ ${errorData.error || 'Failed to backup accounts'}`);
+        return;
       }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        setBackupMessage('❌ Failed to start streaming response');
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) break;
+        
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              
+              if (data.type === 'progress') {
+                setBackupProgress({ 
+                  current: data.current, 
+                  total: data.total 
+                });
+                setBackupMessage(`🔄 ${data.message}`);
+              } else if (data.type === 'complete') {
+                setBackupMessage(`✅ ${data.message}`);
+                setBackupResults(data);
+                setBackupProgress({ 
+                  current: data.count || 0, 
+                  total: data.count || 0 
+                });
+              } else if (data.type === 'error') {
+                setBackupMessage(`❌ ${data.message}`);
+              }
+            } catch (e) {
+              console.error('Error parsing SSE data:', e);
+            }
+          }
+        }
+      }
+
     } catch (error) {
       console.error('Backup error:', error);
-      setBackupMessage('❌ Failed to backup following');
+      setBackupMessage('❌ Failed to backup accounts');
     } finally {
       setBackingUp(false);
     }
   };
 
-  const downloadCSV = () => {
-    if (!backupResults?.csvData) return;
+  const downloadCSV = async () => {
+    if (!signerData) return;
 
-    const filename = `farcaster-following-${new Date().toISOString().split('T')[0]}.csv`;
-    const downloadUrl = `/api/download?data=${encodeURIComponent(backupResults.csvData)}&filename=${encodeURIComponent(filename)}`;
-    
-    // Construct full URL for SDK
-    const fullUrl = `${window.location.origin}${downloadUrl}`;
-    
-    // Use SDK to open the download URL
-    sdk.actions.openUrl(fullUrl);
+    try {
+      const filename = `farcaster-following-${new Date().toISOString().split('T')[0]}.csv`;
+      
+      // Get CSV data from backup
+      const response = await fetch('/api/generate-csv', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          signerData
+        }),
+      });
+
+      if (!response.ok) {
+        console.error('Failed to generate CSV');
+        return;
+      }
+
+      const { csvData } = await response.json();
+      
+      // Generate download ID
+      const downloadResponse = await fetch('/api/generate-download', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          csvData,
+          filename
+        }),
+      });
+
+      if (!downloadResponse.ok) {
+        console.error('Failed to generate download');
+        return;
+      }
+
+      const { downloadUrl } = await downloadResponse.json();
+      
+      // Construct full URL for SDK
+      const fullUrl = `${window.location.origin}${downloadUrl}`;
+      
+      // Use SDK to open the download URL
+      sdk.actions.openUrl(fullUrl);
+    } catch (error) {
+      console.error('Download error:', error);
+    }
   };
 
   // Follow FIDs tool functions
@@ -421,41 +520,75 @@ export function FarcasterTools() {
     setFollowFidsResults([]);
   };
 
-  if (!isConnected) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Users className="h-5 w-5" />
-            Farcaster Tools
-          </CardTitle>
-          <CardDescription>
-            Connect your wallet to use Farcaster tools
-          </CardDescription>
-        </CardHeader>
-      </Card>
-    );
-  }
+  const checkExistingBackup = async (ethAddress: string) => {
+    try {
+      console.log('Checking backup for address:', ethAddress);
+      
+      const response = await fetch('/api/get-backup-info', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ethAddress
+        }),
+      });
 
-  // Show loading while fetching signer data
-  if (isConnected && !signerData) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Users className="h-5 w-5" />
-            Farcaster Tools
-          </CardTitle>
-          <CardDescription>
-            Loading your signer data...
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <LoadingSpinner message="Loading signer data..." />
-        </CardContent>
-      </Card>
-    );
-  }
+      console.log('Backup check response status:', response.status);
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('Backup check response data:', data);
+        
+        if (data.exists) {
+          setBackupResults({
+            message: `Backup found with ${data.count} accounts`,
+            count: data.count,
+            csvData: '', // We'll generate this when needed
+            accounts: [] // We don't need to load all accounts here
+          });
+          setBackupMessage(`✅ Found existing backup with ${data.count} accounts`);
+        }
+      } else {
+        const errorData = await response.json();
+        console.error('Backup check failed:', errorData);
+      }
+    } catch (error) {
+      console.error('Error checking existing backup:', error);
+    }
+  };
+
+  const deleteBackup = async () => {
+    if (!signerData) {
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/delete-backup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          signerData
+        }),
+      });
+
+      if (response.ok) {
+        setBackupResults(null);
+        setBackupMessage('✅ Backup deleted successfully');
+      } else {
+        setBackupMessage('❌ Failed to delete backup');
+      }
+    } catch (error) {
+      console.error('Delete backup error:', error);
+      setBackupMessage('❌ Failed to delete backup');
+    }
+  };
+
+
+
+
 
   return (
     <>
@@ -466,7 +599,7 @@ export function FarcasterTools() {
             unfollowing ? `Unfollowing accounts... ${unfollowProgress.current}/${unfollowProgress.total}` :
             refollowing ? `Re-following accounts... ${refollowProgress.current}/${refollowProgress.total}` :
             followingFids ? `Following accounts... ${followFidsProgress.current}/${followFidsProgress.total}` :
-            backingUp ? 'Backing up following data...' :
+            backingUp ? `Backing up following data... ${backupProgress.current}/${backupProgress.total}` :
             'Processing...'
           }
         />
@@ -475,57 +608,31 @@ export function FarcasterTools() {
       <div className="space-y-6">
         {/* 3-Step Flow Card */}
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Users className="h-5 w-5" />
-              Farcaster Tools
-            </CardTitle>
-            <CardDescription>
-              Follow this 3-step process to manage your Farcaster following
-            </CardDescription>
-          </CardHeader>
-          
-          <CardContent className="space-y-8">
+                    <CardContent className="space-y-6 pt-6">
             {/* Step 1: Backup */}
             <div className="space-y-4">
-              <div className="flex items-center gap-3">
-                <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium ${
-                  backupResults ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
-                }`}>
-                  {backupResults ? <CheckCircle className="h-5 w-5" /> : '1'}
-                </div>
-                <div>
-                  <h4 className="text-lg font-medium flex items-center gap-2">
-                    <Download className="h-4 w-4" />
-                    Create Backup
-                  </h4>
-                  <p className="text-muted-foreground text-sm">
-                    First, backup all your following accounts. This is required before unfollowing.
-                  </p>
-                </div>
-              </div>
               
-              {!backupResults && (
-                <Button
-                  onClick={handleBackup}
-                  disabled={backingUp}
-                  variant="default"
-                  size="lg"
-                  className="w-full"
-                >
-                  {backingUp ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Creating Backup...
-                    </>
-                  ) : (
-                    <>
-                      <Download className="h-4 w-4 mr-2" />
-                      Create Backup
-                    </>
-                  )}
-                </Button>
-              )}
+                              {!backupResults && (
+                  <Button
+                    onClick={handleBackup}
+                    disabled={backingUp}
+                    variant="default"
+                    size="lg"
+                    className="w-full bg-green-600 hover:bg-green-700 text-white border-green-600 hover:border-green-700"
+                  >
+                    {backingUp ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Creating Backup... ({backupProgress.current}/{backupProgress.total})
+                      </>
+                    ) : (
+                      <>
+                        <Download className="h-4 w-4 mr-2" />
+                        Create Backup
+                      </>
+                    )}
+                  </Button>
+                )}
               
               {backupMessage && !backupMessage.startsWith('✅') && (
                 <p className="text-sm text-red-600">
@@ -533,20 +640,33 @@ export function FarcasterTools() {
                 </p>
               )}
               
-              {backupResults && (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-green-800">
-                      ✅ Backup Complete - {backupResults.count} accounts found
-                    </span>
-                    <Button
-                      onClick={downloadCSV}
-                      variant="outline"
-                      size="sm"
-                    >
-                      <Download className="h-4 w-4 mr-1" />
-                      Download CSV
-                    </Button>
+                            {backupResults && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-6">
+                  <div className="space-y-4">
+                    <div className="text-center space-y-2">
+                      <div className="text-lg font-semibold text-green-800">Backup complete!</div>
+                      <div className="text-sm text-green-700">{backupResults.count} accounts stored in the cloud</div>
+                    </div>
+                    <div className="flex flex-col gap-3">
+                      <Button
+                        onClick={downloadCSV}
+                        variant="outline"
+                        size="sm"
+                        className="w-full text-green-700 border-green-300 hover:bg-green-100"
+                      >
+                        <Download className="h-4 w-4 mr-2" />
+                        Download CSV
+                      </Button>
+                      <Button
+                        onClick={() => setShowDeleteConfirm(true)}
+                        variant="outline"
+                        size="sm"
+                        className="w-full text-red-700 border-red-300 hover:bg-red-100"
+                      >
+                        <AlertCircle className="h-4 w-4 mr-2" />
+                        Delete Backup
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -554,46 +674,17 @@ export function FarcasterTools() {
 
             {/* Step 2: Unfollow ALL */}
             <div className="space-y-4">
-              <div className="flex items-center gap-3">
-                <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium ${
-                  unfollowedAccounts.length > 0 ? 'bg-green-100 text-green-700' : 
-                  backupResults ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-600'
-                }`}>
-                  {unfollowedAccounts.length > 0 ? <CheckCircle className="h-5 w-5" /> : 
-                   backupResults ? <AlertCircle className="h-5 w-5" /> : '2'}
-                </div>
-                <div>
-                  <h4 className="text-lg font-medium flex items-center gap-2">
-                    <UserMinus className="h-4 w-4" />
-                    Unfollow ALL
-                  </h4>
-                  <p className="text-muted-foreground text-sm">
-                    Unfollow all accounts from your backup. This will unfollow {backupResults?.count || 0} accounts.
-                  </p>
-                </div>
-              </div>
               
-              {backupResults && unfollowedAccounts.length === 0 && (
-                <Button
-                  onClick={handleUnfollowAll}
-                  disabled={unfollowing}
-                  variant="destructive"
-                  size="lg"
-                  className="w-full"
-                >
-                  {unfollowing ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Unfollowing All... ({unfollowProgress.current}/{unfollowProgress.total})
-                    </>
-                  ) : (
-                    <>
-                      <UserMinus className="h-4 w-4 mr-2" />
-                      Unfollow ALL ({backupResults.count} accounts)
-                    </>
-                  )}
-                </Button>
-              )}
+              <Button
+                onClick={() => setShowUnfollowConfirm(true)}
+                disabled={!backupResults || unfollowing}
+                variant="destructive"
+                size="lg"
+                className="w-full"
+              >
+                <UserMinus className="h-4 w-4 mr-2" />
+                Unfollow ALL {backupResults ? `(${backupResults.count} accounts)` : ''}
+              </Button>
               
               {unfollowMessage && !unfollowMessage.startsWith('✅') && (
                 <p className="text-sm text-red-600">
@@ -611,179 +702,39 @@ export function FarcasterTools() {
                 </div>
               )}
             </div>
-
-            {/* Step 3: Refollow ALL */}
-            <div className="space-y-4">
-              <div className="flex items-center gap-3">
-                <div className={`flex items-center justify-center w-8 h-8 rounded-full text-sm font-medium ${
-                  refollowResults.length > 0 ? 'bg-green-100 text-green-700' : 
-                  unfollowedAccounts.length > 0 ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-600'
-                }`}>
-                  {refollowResults.length > 0 ? <CheckCircle className="h-5 w-5" /> : 
-                   unfollowedAccounts.length > 0 ? <AlertCircle className="h-5 w-5" /> : '3'}
-                </div>
-                <div>
-                  <h4 className="text-lg font-medium flex items-center gap-2">
-                    <UserPlus className="h-4 w-4" />
-                    Refollow ALL
-                  </h4>
-                  <p className="text-muted-foreground text-sm">
-                    Re-follow all previously unfollowed accounts.
-                  </p>
-                </div>
-              </div>
-              
-              {refollowResults.length === 0 && (
-                <Button
-                  onClick={handleRefollowAll}
-                  disabled={refollowing}
-                  variant="default"
-                  size="lg"
-                  className="w-full"
-                >
-                  {refollowing ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Re-following All... ({refollowProgress.current}/{refollowProgress.total})
-                    </>
-                  ) : (
-                    <>
-                      <UserPlus className="h-4 w-4 mr-2" />
-                      Refollow ALL
-                    </>
-                  )}
-                </Button>
-              )}
-              
-              {refollowMessage && !refollowMessage.startsWith('✅') && (
-                <p className="text-sm text-red-600">
-                  {refollowMessage}
-                </p>
-              )}
-              
-              {refollowResults.length > 0 && (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-green-800">
-                      ✅ Re-followed {refollowResults.length} accounts
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Follow FIDs Tool Card */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <UserPlus className="h-5 w-5" />
-              Follow FIDs
-            </CardTitle>
-            <CardDescription>
-              Enter a list of FIDs to follow all accounts
-            </CardDescription>
-          </CardHeader>
-          
-          <CardContent className="space-y-4">
-            <div className="space-y-4">
-              <div>
-                <h4 className="text-lg font-medium flex items-center gap-2">
-                  <FileText className="h-4 w-4" />
-                  Enter FIDs
-                </h4>
-                <p className="text-muted-foreground text-sm">
-                  Enter FIDs separated by commas, spaces, or new lines. One FID per line or comma-separated.
-                </p>
-              </div>
-              
-              <div className="space-y-3">
-                <textarea
-                  value={fidsInput}
-                  onChange={(e) => setFidsInput(e.target.value)}
-                  placeholder="Enter FIDs here...&#10;Example:&#10;373255&#10;812150, 235323&#10;248704 16214"
-                  className="w-full h-32 p-3 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                
-                <div className="flex gap-3">
-                  <Button
-                    onClick={handleFollowFids}
-                    disabled={followingFids || !fidsInput.trim()}
-                    variant="default"
-                    size="lg"
-                    className="flex-1"
-                  >
-                    {followingFids ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Following... ({followFidsProgress.current}/{followFidsProgress.total})
-                      </>
-                    ) : (
-                      <>
-                        <UserPlus className="h-4 w-4 mr-2" />
-                        Follow FIDs
-                      </>
-                    )}
-                  </Button>
-                  
-                  <Button
-                    onClick={clearFids}
-                    variant="outline"
-                    size="lg"
-                  >
-                    Clear
-                  </Button>
-                </div>
-              </div>
-              
-              {followFidsMessage && (
-                <p className={`text-sm ${
-                  followFidsMessage.startsWith('✅') ? 'text-green-600' : 'text-red-600'
-                }`}>
-                  {followFidsMessage}
-                </p>
-              )}
-              
-              {fidsInput.trim() && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-blue-800">
-                      📋 Found {parseFidsInput(fidsInput).length} FIDs to follow
-                    </span>
-                  </div>
-                  
-                  <div className="max-h-32 overflow-y-auto">
-                    <h5 className="text-sm font-medium mb-2">FIDs to follow:</h5>
-                    <div className="space-y-1">
-                      {parseFidsInput(fidsInput).slice(0, 10).map((fid, index) => (
-                        <div key={index} className="text-xs">
-                          FID {fid}
-                        </div>
-                      ))}
-                      {parseFidsInput(fidsInput).length > 10 && (
-                        <div className="text-muted-foreground text-xs">
-                          ... and {parseFidsInput(fidsInput).length - 10} more
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-              
-              {followFidsResults.length > 0 && (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-green-800">
-                      ✅ Followed {followFidsResults.length} accounts
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
           </CardContent>
         </Card>
       </div>
+
+      {/* Confirmation Modals */}
+      <ConfirmModal
+        isOpen={showUnfollowConfirm}
+        onClose={() => setShowUnfollowConfirm(false)}
+        onConfirm={() => {
+          setShowUnfollowConfirm(false);
+          handleUnfollowAll();
+        }}
+        title="Unfollow All Accounts"
+        message={`Are you sure you want to unfollow all ${backupResults?.count || 0} accounts? This action cannot be undone.`}
+        confirmText="Unfollow All"
+        cancelText="Cancel"
+        confirmVariant="destructive"
+        isLoading={unfollowing}
+      />
+
+      <ConfirmModal
+        isOpen={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={() => {
+          setShowDeleteConfirm(false);
+          deleteBackup();
+        }}
+        title="Delete Backup"
+        message="Are you sure you want to delete your backup? This will remove all backed-up account data from the database."
+        confirmText="Delete Backup"
+        cancelText="Cancel"
+        confirmVariant="destructive"
+      />
     </>
   );
 } 
