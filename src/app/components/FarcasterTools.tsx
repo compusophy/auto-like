@@ -114,7 +114,14 @@ export function FarcasterTools({ signerData }: FarcasterToolsProps) {
 
       if (!response.ok) {
         const errorData = await response.json();
-        setUnfollowMessage(`❌ ${errorData.error || 'Failed to unfollow accounts'}`);
+        const errorMessage = errorData.error || 'Failed to unfollow accounts';
+        
+        // Check if it's a validation error
+        if (errorMessage.includes('Signer validation failed')) {
+          setUnfollowMessage(`❌ ${errorMessage}. Please validate your signer in Settings first.`);
+        } else {
+          setUnfollowMessage(`❌ ${errorMessage}`);
+        }
         return;
       }
 
@@ -283,7 +290,14 @@ export function FarcasterTools({ signerData }: FarcasterToolsProps) {
 
       if (!response.ok) {
         const errorData = await response.json();
-        setBackupMessage(`❌ ${errorData.error || 'Failed to backup accounts'}`);
+        const errorMessage = errorData.error || 'Failed to backup accounts';
+        
+        // Check if it's a validation error
+        if (errorMessage.includes('Signer validation failed')) {
+          setBackupMessage(`❌ ${errorMessage}. Please validate your signer in Settings first.`);
+        } else {
+          setBackupMessage(`❌ ${errorMessage}`);
+        }
         return;
       }
 

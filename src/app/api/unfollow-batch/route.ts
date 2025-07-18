@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSignerByEthAddress } from '../../lib/redis-read';
-import { storeUnfollowedAccounts, markBackupAsUnfollowed } from '../../lib/redis-write';
+import { storeUnfollowedAccounts, markBackupAsUnfollowed, completeSignerValidation } from '../../lib/redis-write';
 import { 
   NobleEd25519Signer, 
   makeLinkRemove,
@@ -91,6 +91,144 @@ async function getAllFollowing(sourceFid: number): Promise<Following[]> {
   return allFollowing;
 }
 
+// Validate signer before allowing unfollow operations
+async function validateSigner(signerData: any): Promise<{ isValid: boolean; message: string; fid?: string }> {
+  try {
+    console.log('🔧 Validating signer before unfollow for address:', signerData.address);
+
+    // Get signer from database
+    const signer = await getSignerByEthAddress(signerData.address);
+    
+    if (!signer) {
+      console.log('❌ No signer found in database for address:', signerData.address);
+      return { isValid: false, message: 'No signer found for this address' };
+    }
+
+    console.log('📋 Signer found in database:', {
+      fid: signer.fid,
+      isValidated: signer.isValidated,
+      isPending: signer.isPending,
+      hasToken: !!signer.token
+    });
+
+    // Always perform validation check (even if already validated)
+    if (!signer.token) {
+      console.log('❌ No token found for signer, cannot validate');
+      return { isValid: false, message: 'No token found - cannot validate' };
+    }
+
+    console.log('🔍 Checking signed key request status via Farcaster API...');
+
+    // Test the signer by attempting a follow operation
+    try {
+      console.log('🧪 Testing signer by attempting follow operation...');
+      
+      // Import required modules dynamically
+      const { NobleEd25519Signer, makeLinkAdd, FarcasterNetwork } = await import('@farcaster/hub-nodejs');
+      const { hexToBytes } = await import('@noble/hashes/utils');
+      
+      if (!signer.fid) {
+        return { isValid: false, message: 'No FID found for signer' };
+      }
+
+      // Prepare the private key
+      const cleanPrivateKey = signer.privateKey.replace('0x', '');
+      const privateKeyBytes = hexToBytes(cleanPrivateKey);
+      const ed25519Signer = new NobleEd25519Signer(privateKeyBytes);
+
+      // Target FID to follow (use a known FID that exists)
+      const targetFid = 373255; // Your FID
+      
+      // Skip if this signer's FID is the same as our target (can't follow yourself)
+      if (parseInt(signer.fid) === targetFid) {
+        console.log('⏭️ Skipping follow test - same FID as target');
+        // Mark as valid since we can't test it
+        const validationResult = await completeSignerValidation(signerData.address, signer.fid);
+        return { 
+          isValid: validationResult.isValid, 
+          message: validationResult.isValid ? 'Signer validated (same FID as target)' : 'Failed to validate signer',
+          fid: signer.fid
+        };
+      }
+
+      console.log(`🔍 Testing signer for FID ${signer.fid} by following FID ${targetFid}`);
+
+      // Create a follow message
+      const messageResult = await makeLinkAdd(
+        {
+          type: "follow",
+          targetFid: targetFid
+        },
+        {
+          fid: parseInt(signer.fid),
+          network: FarcasterNetwork.MAINNET
+        },
+        ed25519Signer
+      );
+
+      if (!messageResult.isOk()) {
+        console.log('❌ Failed to create follow message:', messageResult.error);
+        return { isValid: false, message: `Failed to create test message: ${messageResult.error}` };
+      }
+
+      // Submit to Farcaster hub via Neynar
+      const { Message } = await import('@farcaster/hub-nodejs');
+      const messageBytes = Buffer.from(Message.encode(messageResult.value).finish());
+
+      const neynarApiKey = process.env.NEYNAR_API_KEY;
+      if (!neynarApiKey) {
+        return { isValid: false, message: 'NEYNAR_API_KEY not configured' };
+      }
+
+      const response = await fetch('https://hub-api.neynar.com/v1/submitMessage', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'X-API-KEY': neynarApiKey
+        },
+        body: messageBytes
+      });
+
+      if (response.ok) {
+        const responseData = await response.arrayBuffer();
+        const hash = `0x${Buffer.from(responseData).toString("hex")}`;
+        console.log(`✅ Follow test successful! Hash: ${hash}`);
+        
+        // Update the signer as validated
+        const validationResult = await completeSignerValidation(signerData.address, signer.fid);
+        
+        return {
+          isValid: true,
+          message: 'Signer validated successfully!',
+          fid: signer.fid
+        };
+      } else {
+        const errorText = await response.text();
+        console.log(`❌ Follow test failed: ${errorText}`);
+        
+        // Check if it's an invalid signer error
+        const isInvalidSigner = errorText.toLowerCase().includes('invalid signer') ||
+                               errorText.toLowerCase().includes('unknown_signer') ||
+                               errorText.toLowerCase().includes('unauthorized');
+        
+        if (isInvalidSigner) {
+          return { isValid: false, message: 'Signer is invalid or not approved' };
+        } else {
+          return { isValid: false, message: `Test failed: ${errorText}` };
+        }
+      }
+      
+    } catch (testError) {
+      console.error('❌ Signer test error:', testError);
+      return { isValid: false, message: 'Failed to test signer' };
+    }
+
+  } catch (error) {
+    console.error('❌ Signer validation error:', error);
+    return { isValid: false, message: 'Internal validation error' };
+  }
+}
+
 // Unfollow a single account
 async function unfollowAccount(
   sourceFid: number,
@@ -161,6 +299,19 @@ export async function POST(request: NextRequest) {
     
     console.log(`Processing unfollow for FID: ${sourceFid}`);
     
+    // Validate signer before proceeding with unfollow
+    console.log('🔍 Validating signer before unfollow...');
+    const validationResult = await validateSigner(signerData);
+    
+    if (!validationResult.isValid) {
+      console.log('❌ Signer validation failed:', validationResult.message);
+      return NextResponse.json({ 
+        error: `Signer validation failed: ${validationResult.message}` 
+      }, { status: 403 });
+    }
+    
+    console.log('✅ Signer validation successful, proceeding with unfollow...');
+    
     // Get all accounts to unfollow (using the same batching logic as backup)
     const accounts = await getAllFollowing(sourceFid);
     
@@ -186,10 +337,25 @@ export async function POST(request: NextRequest) {
           };
           
           // Send initial progress
-          sendProgress({ type: 'progress', current: 0, total: accounts.length, message: 'Starting unfollow process...' });
+          sendProgress({ type: 'progress', current: 0, total: accounts.length, message: 'Validating signer...' });
           
-          // Process unfollows
-          const results = [];
+          try {
+            // Validate signer before proceeding
+            const validationResult = await validateSigner(signerData);
+            
+            if (!validationResult.isValid) {
+              sendProgress({
+                type: 'error',
+                message: `Signer validation failed: ${validationResult.message}`
+              });
+              controller.close();
+              return;
+            }
+            
+            sendProgress({ type: 'progress', current: 0, total: accounts.length, message: 'Starting unfollow process...' });
+            
+            // Process unfollows
+            const results = [];
           const unfollowedAccounts = [];
           let successCount = 0;
           let failCount = 0;
@@ -261,6 +427,14 @@ export async function POST(request: NextRequest) {
           });
           
           controller.close();
+          } catch (error) {
+            console.error('Error in unfollow SSE:', error);
+            sendProgress({
+              type: 'error',
+              message: 'Failed to unfollow accounts'
+            });
+            controller.close();
+          }
         }
       });
       
