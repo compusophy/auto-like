@@ -179,7 +179,8 @@ export async function storeBackupData(ethAddress: string, accounts: any[]): Prom
     const backupData = {
       accounts,
       createdAt: Date.now(),
-      count: accounts.length
+      count: accounts.length,
+      unfollowed: false // Track if user has unfollowed from this backup
     };
     
     console.log('💾 Storing backup data for:', ethAddress, 'with', accounts.length, 'accounts');
@@ -210,6 +211,61 @@ export async function getBackupData(ethAddress: string): Promise<any[] | null> {
   } catch (error) {
     console.error('❌ Error retrieving backup data:', error);
     return null;
+  }
+}
+
+// Get backup info including unfollowed status
+export async function getBackupInfo(ethAddress: string): Promise<{ exists: boolean; count: number; unfollowed: boolean } | null> {
+  if (!redisServer) {
+    throw new Error('Redis not configured - cannot get backup info');
+  }
+  
+  try {
+    const key = `backup_${ethAddress}`;
+    const stored = await redisServer.get(key);
+    
+    if (!stored) {
+      return null;
+    }
+    
+    const backupData = typeof stored === 'string' ? JSON.parse(stored) : stored;
+    return {
+      exists: true,
+      count: backupData.count || 0,
+      unfollowed: backupData.unfollowed || false
+    };
+  } catch (error) {
+    console.error('❌ Error retrieving backup info:', error);
+    return null;
+  }
+}
+
+// Mark backup as unfollowed
+export async function markBackupAsUnfollowed(ethAddress: string): Promise<void> {
+  if (!redisServer) {
+    throw new Error('Redis not configured - cannot mark backup as unfollowed');
+  }
+  
+  try {
+    const key = `backup_${ethAddress}`;
+    const stored = await redisServer.get(key);
+    
+    if (!stored) {
+      throw new Error('Backup not found');
+    }
+    
+    const backupData = typeof stored === 'string' ? JSON.parse(stored) : stored;
+    const updatedBackupData = {
+      ...backupData,
+      unfollowed: true
+    };
+    
+    console.log('💾 Marking backup as unfollowed for:', ethAddress);
+    await redisServer.set(key, JSON.stringify(updatedBackupData));
+    console.log('✅ Backup marked as unfollowed successfully');
+  } catch (error) {
+    console.error('❌ Error marking backup as unfollowed:', error);
+    throw error;
   }
 }
 

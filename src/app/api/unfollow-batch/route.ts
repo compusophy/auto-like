@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSignerByEthAddress } from '../../lib/redis-read';
-import { storeUnfollowedAccounts } from '../../lib/redis-write';
+import { storeUnfollowedAccounts, markBackupAsUnfollowed } from '../../lib/redis-write';
 import { 
   NobleEd25519Signer, 
   makeLinkRemove,
@@ -244,6 +244,11 @@ export async function POST(request: NextRequest) {
             await storeUnfollowedAccounts(signerData.address, unfollowedAccounts);
           }
           
+          // Mark backup as unfollowed if we had any successful unfollows
+          if (successCount > 0) {
+            await markBackupAsUnfollowed(signerData.address);
+          }
+          
           // Send final result
           sendProgress({
             type: 'complete',
@@ -312,6 +317,11 @@ export async function POST(request: NextRequest) {
     // Store unfollowed accounts in Redis
     if (unfollowedAccounts.length > 0) {
       await storeUnfollowedAccounts(signerData.address, unfollowedAccounts);
+    }
+    
+    // Mark backup as unfollowed if we had any successful unfollows
+    if (successCount > 0) {
+      await markBackupAsUnfollowed(signerData.address);
     }
     
     return NextResponse.json({

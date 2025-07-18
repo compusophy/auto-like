@@ -9,11 +9,6 @@ import { sdk } from '@farcaster/miniapp-sdk';
 const queryClient = new QueryClient();
 
 export function Providers({ children }: { children: ReactNode }) {
-  useEffect(() => {
-    // Initialize the Farcaster miniapp SDK
-    sdk.actions.ready();
-  }, []);
-
   return (
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>

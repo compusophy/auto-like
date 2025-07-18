@@ -3,26 +3,14 @@
 import { useEffect, useState } from 'react';
 import { SettingsModal } from './components/SettingsModal';
 import { FarcasterTools } from './components/FarcasterTools';
+import { AuthWrapper } from './components/AuthWrapper';
 import { Button } from '../components/ui/button';
 import { Dialog, DialogTrigger } from '../components/ui/dialog';
 import { Settings } from 'lucide-react';
+import type { SignerData } from './lib/types';
 
 export default function App() {
-  const [isMounted, setIsMounted] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
-
-  if (!isMounted) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-8 bg-background">
-        <h1 className="text-4xl font-bold mb-8 text-foreground">Compu Compusophy</h1>
-        <p className="text-lg text-muted-foreground">Loading...</p>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -46,7 +34,11 @@ export default function App() {
       {/* Main Content */}
       <main className="flex flex-col items-center justify-center min-h-screen p-8">
         <div className="w-full max-w-2xl">
-          <FarcasterTools />
+          <AuthWrapper>
+            {(signerData: SignerData | null) => (
+              <FarcasterTools signerData={signerData} />
+            )}
+          </AuthWrapper>
         </div>
       </main>
     </div>

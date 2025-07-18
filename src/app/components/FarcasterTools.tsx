@@ -1,14 +1,12 @@
 "use client";
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useAccount } from 'wagmi';
-import { getSignerByEthAddress } from '../lib/redis-read';
 import type { SignerData } from '../lib/types';
 import { Button } from '../../components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '../../components/ui/dialog';
-import { Settings, Download, Users, UserMinus, UserPlus, Loader2, CheckCircle, AlertCircle, Upload, FileText, Cloud } from 'lucide-react';
-import { LoadingSpinner, LoadingOverlay } from './LoadingSpinner';
+import { Card, CardContent } from '../../components/ui/card';
+import { Settings, Download, UserMinus, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
+
 import { ConfirmModal } from './ConfirmModal';
 import { sdk } from '@farcaster/miniapp-sdk';
 
@@ -37,9 +35,14 @@ interface BackupResult {
 
 
 
-export function FarcasterTools() {
+interface FarcasterToolsProps {
+  signerData: SignerData | null;
+}
+
+export function FarcasterTools({ signerData }: FarcasterToolsProps) {
   const { address, isConnected } = useAccount();
-  const [signerData, setSignerData] = useState<SignerData | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
   const [unfollowing, setUnfollowing] = useState(false);
   const [unfollowResults, setUnfollowResults] = useState<UnfollowResult[]>([]);
   const [unfollowMessage, setUnfollowMessage] = useState<string | null>(null);
@@ -66,32 +69,18 @@ export function FarcasterTools() {
   // Confirmation modal states
   const [showUnfollowConfirm, setShowUnfollowConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  
+  // Track if user has unfollowed for current backup
+  const [hasUnfollowed, setHasUnfollowed] = useState(false);
 
-  // Load signer data and check for existing backup when connected
+  // Check for backup when we have signer data
   useEffect(() => {
-    if (isConnected && address) {
-      getSignerByEthAddress(address)
-        .then((signer) => {
-          console.log('Fetched signer data:', signer);
-          if (signer) {
-            setSignerData({
-              address: address, // Use the address from wagmi hook
-              fid: signer.fid,
-              privateKey: signer.privateKey
-            });
-            
-            // Check for existing backup using the address from wagmi hook
-            checkExistingBackup(address);
-          }
-        })
-        .catch((error) => {
-          console.error('Error fetching signer:', error);
-        });
-    } else {
-      setSignerData(null);
-      setBackupResults(null);
+    if (signerData && address) {
+      checkExistingBackup(address);
     }
-  }, [isConnected, address]);
+  }, [signerData, address]);
+
+
 
   const handleUnfollowAll = async () => {
     if (!signerData) {
@@ -159,13 +148,14 @@ export function FarcasterTools() {
                 });
                 setUnfollowMessage(`🔄 ${data.message}`);
               } else if (data.type === 'complete') {
-                setUnfollowMessage(`✅ ${data.message}`);
+                setUnfollowMessage(`Success: ${data.message}`);
                 setUnfollowResults(data.results || []);
                 setUnfollowedAccounts(data.unfollowedAccounts || []);
                 setUnfollowProgress({ 
                   current: data.unfollowed || 0, 
                   total: data.total 
                 });
+                setHasUnfollowed(true); // Mark as unfollowed
               }
             } catch (e) {
               console.error('Error parsing SSE data:', e);
@@ -276,6 +266,7 @@ export function FarcasterTools() {
     setBackupMessage(null);
     setBackupResults(null);
     setBackupProgress({ current: 0, total: 0 });
+    setHasUnfollowed(false); // Reset unfollowed state for new backup
 
     try {
       // Use Server-Sent Events for real-time progress
@@ -548,6 +539,7 @@ export function FarcasterTools() {
             accounts: [] // We don't need to load all accounts here
           });
           setBackupMessage(`✅ Found existing backup with ${data.count} accounts`);
+          setHasUnfollowed(data.unfollowed || false); // Set unfollowed state from database
         }
       } else {
         const errorData = await response.json();
@@ -577,6 +569,7 @@ export function FarcasterTools() {
       if (response.ok) {
         setBackupResults(null);
         setBackupMessage('✅ Backup deleted successfully');
+        setHasUnfollowed(false); // Reset unfollowed state
       } else {
         setBackupMessage('❌ Failed to delete backup');
       }
@@ -590,73 +583,7 @@ export function FarcasterTools() {
 
 
 
-  // Show signer required message when wallet is connected but no signer data
-  if (isConnected && !signerData) {
-    return (
-      <div className="space-y-6">
-        {/* Preview of main interface (disabled) */}
-        <Card className="opacity-50">
-          <CardContent className="space-y-6 pt-6">
-            {/* Step 1: Backup */}
-            <div className="space-y-4">
-              <Button
-                disabled
-                variant="default"
-                size="lg"
-                className="w-full bg-green-600 hover:bg-green-700 text-white border-green-600 hover:border-green-700"
-              >
-                <Download className="h-4 w-4 mr-2" />
-                Create Backup
-              </Button>
-            </div>
 
-            {/* Step 2: Unfollow ALL */}
-            <div className="space-y-4">
-              <Button
-                disabled
-                variant="destructive"
-                size="lg"
-                className="w-full"
-              >
-                <UserMinus className="h-4 w-4 mr-2" />
-                Unfollow ALL
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Signer requirement card */}
-        <Card>
-          <CardContent className="space-y-6 pt-6">
-            <div className="text-center space-y-4">
-              <div className="flex justify-center">
-                <AlertCircle className="h-12 w-12 text-orange-500" />
-              </div>
-              <div className="space-y-2">
-                <h3 className="text-lg font-semibold text-gray-900">Signer Required</h3>
-                <p className="text-sm text-gray-600">
-                  This app requires a compusophy signer to manage your Farcaster following.
-                </p>
-              </div>
-              <Button
-                onClick={() => {
-                  sdk.actions.openMiniApp({
-                    url: 'https://farcaster.xyz/miniapps/QKe6PvOqtlqH/compusophy-signer'
-                  });
-                }}
-                variant="default"
-                size="lg"
-                className="w-full"
-              >
-                <Users className="h-4 w-4 mr-2" />
-                Get compusophy Signer
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
 
   // Show nothing when not connected
   if (!isConnected) {
@@ -667,15 +594,20 @@ export function FarcasterTools() {
     <>
       {/* Loading overlay for long operations */}
       {(unfollowing || refollowing || backingUp || followingFids) && (
-        <LoadingOverlay 
-          message={
-            unfollowing ? `Unfollowing accounts... ${unfollowProgress.current}/${unfollowProgress.total}` :
-            refollowing ? `Re-following accounts... ${refollowProgress.current}/${refollowProgress.total}` :
-            followingFids ? `Following accounts... ${followFidsProgress.current}/${followFidsProgress.total}` :
-            backingUp ? `Backing up following data... ${backupProgress.current}/${backupProgress.total}` :
-            'Processing...'
-          }
-        />
+        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-card border rounded-lg shadow-lg p-6 max-w-sm w-full mx-4">
+            <div className="flex flex-col items-center justify-center space-y-3">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="text-sm text-muted-foreground">
+                {unfollowing ? `Unfollowing accounts... ${unfollowProgress.current}/${unfollowProgress.total}` :
+                refollowing ? `Re-following accounts... ${refollowProgress.current}/${refollowProgress.total}` :
+                followingFids ? `Following accounts... ${followFidsProgress.current}/${followFidsProgress.total}` :
+                backingUp ? `Backing up following data... ${backupProgress.current}/${backupProgress.total}` :
+                'Processing...'}
+              </p>
+            </div>
+          </div>
+        </div>
       )}
       
       <div className="space-y-6">
@@ -750,29 +682,19 @@ export function FarcasterTools() {
               
               <Button
                 onClick={() => setShowUnfollowConfirm(true)}
-                disabled={!backupResults || unfollowing}
+                disabled={!backupResults || unfollowing || hasUnfollowed}
                 variant="destructive"
                 size="lg"
                 className="w-full"
               >
                 <UserMinus className="h-4 w-4 mr-2" />
-                Unfollow ALL {backupResults ? `(${backupResults.count} accounts)` : ''}
+                {hasUnfollowed ? `Unfollowed ALL ${backupResults ? `(${backupResults.count} accounts)` : ''}` : `Unfollow ALL ${backupResults ? `(${backupResults.count} accounts)` : ''}`}
               </Button>
               
-              {unfollowMessage && !unfollowMessage.startsWith('✅') && (
+              {unfollowMessage && !unfollowMessage.startsWith('Success:') && (
                 <p className="text-sm text-red-600">
                   {unfollowMessage}
                 </p>
-              )}
-              
-              {unfollowedAccounts.length > 0 && (
-                <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-orange-800">
-                      ✅ Unfollowed {unfollowedAccounts.length} accounts
-                    </span>
-                  </div>
-                </div>
               )}
             </div>
           </CardContent>
@@ -810,4 +732,5 @@ export function FarcasterTools() {
       />
     </>
   );
+
 } 

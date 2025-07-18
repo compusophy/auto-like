@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getBackupData } from '../../lib/redis-write';
+import { getBackupInfo } from '../../lib/redis-write';
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,21 +15,23 @@ export async function POST(request: NextRequest) {
     
     console.log('Checking backup for address:', ethAddress);
     
-    // Get backup data from Redis
-    const backupData = await getBackupData(ethAddress);
+    // Get backup info from Redis
+    const backupInfo = await getBackupInfo(ethAddress);
     
-    console.log('Backup data result:', backupData ? `Found ${backupData.length} accounts` : 'No backup found');
+    console.log('Backup info result:', backupInfo ? `Found ${backupInfo.count} accounts, unfollowed: ${backupInfo.unfollowed}` : 'No backup found');
     
-    if (!backupData) {
+    if (!backupInfo) {
       return NextResponse.json({ 
         exists: false,
-        count: 0
+        count: 0,
+        unfollowed: false
       });
     }
     
     return NextResponse.json({
       exists: true,
-      count: backupData.length,
+      count: backupInfo.count,
+      unfollowed: backupInfo.unfollowed,
       createdAt: Date.now() // We could store this in the backup data if needed
     });
     
