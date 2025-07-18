@@ -11,6 +11,11 @@ import type { SignerData } from './lib/types';
 
 export default function App() {
   const [showSettings, setShowSettings] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const handleSignerDeleted = () => {
+    setRefreshKey(prev => prev + 1);
+  };
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -27,14 +32,18 @@ export default function App() {
               <Settings className="h-4 w-4" />
             </Button>
           </DialogTrigger>
-          <SettingsModal isOpen={showSettings} onClose={() => setShowSettings(false)} />
+          <SettingsModal 
+            isOpen={showSettings} 
+            onClose={() => setShowSettings(false)} 
+            onSignerDeleted={handleSignerDeleted}
+          />
         </Dialog>
       </header>
 
       {/* Main Content */}
       <main className="flex flex-col items-center justify-center min-h-screen p-8">
         <div className="w-full max-w-2xl">
-          <AuthWrapper>
+          <AuthWrapper key={refreshKey}>
             {(signerData: SignerData | null) => (
               <FarcasterTools signerData={signerData} />
             )}

@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { useAccount } from 'wagmi';
-import { getSignerByEthAddress } from '../lib/redis-read';
+import { useAccount, useConnect } from 'wagmi';
 import type { SignerData } from '../lib/types';
 import { Card, CardContent } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
@@ -15,29 +14,55 @@ interface AuthWrapperProps {
 
 export function AuthWrapper({ children }: AuthWrapperProps) {
   const { address, isConnected } = useAccount();
+  const { connect, connectors } = useConnect();
   const [signerData, setSignerData] = useState<SignerData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [hasCheckedAuth, setHasCheckedAuth] = useState(false);
 
+  // Auto-connect to wallet if not connected
+  useEffect(() => {
+    if (!isConnected && connectors.length > 0) {
+      console.log('🔄 Auto-connecting to wallet...');
+      connect({ connector: connectors[0] });
+    }
+  }, [isConnected, connect, connectors]);
+
   // Handle authentication state
   useEffect(() => {
     if (isConnected && address) {
-      // Check Redis database for signer
-      getSignerByEthAddress(address)
-        .then((signer) => {
-          console.log('AuthWrapper: Fetched signer data:', signer);
-          if (signer) {
+      console.log('🔗 Wallet connected:', address);
+      
+      // Check API for signer data
+      fetch(`/api/get-signer/${address}`)
+        .then((response) => {
+          if (response.ok) {
+            return response.json();
+          } else if (response.status === 404) {
+            // Signer not found, which is expected for new users
+            console.log('No existing signer found for address:', address);
+            return null;
+          } else {
+            console.error('API Error:', response.status);
+            // Even if API fails, wallet connection is sufficient
+            return null;
+          }
+        })
+        .then((data) => {
+          console.log('AuthWrapper: Fetched signer data:', data);
+          if (data && data.signer) {
             setSignerData({
               address: address,
-              fid: signer.fid,
-              privateKey: signer.privateKey
+              fid: data.signer.fid,
+              privateKey: data.signer.privateKey
             });
           } else {
+            // No signer found, but wallet is connected - this is valid
             setSignerData(null);
           }
         })
         .catch((error) => {
           console.error('AuthWrapper: Error fetching signer:', error);
+          // Even if API fails, wallet connection is sufficient
           setSignerData(null);
         })
         .finally(() => {
@@ -84,39 +109,38 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
   if (isConnected && !signerData) {
     return (
       <div className="space-y-6">
-        {/* Signer requirement card */}
-        <Card>
-          <CardContent className="space-y-6 pt-6">
-            <div className="text-center space-y-4">
-              <div className="space-y-2">
-                <h3 className="text-lg font-semibold text-gray-900">Signer Required</h3>
-                <p className="text-sm text-gray-600">
-                  This app requires a compusophy signer to manage your Farcaster following.
-                </p>
-              </div>
-              <Button
-                onClick={() => {
-                  sdk.actions.openMiniApp({
-                    url: 'https://farcaster.xyz/miniapps/QKe6PvOqtlqH/compusophy-signer'
-                  });
-                }}
-                variant="default"
-                size="lg"
-                className="w-full"
-              >
-                <PenTool className="h-4 w-4 mr-2" />
-                Get compusophy Signer
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+        <Button
+          onClick={() => {
+            sdk.actions.openMiniApp({
+              url: 'https://farcaster.xyz/miniapps/QKe6PvOqtlqH/compusophy-signer'
+            });
+          }}
+          variant="default"
+          size="lg"
+          className="w-full"
+        >
+          <PenTool className="h-4 w-4 mr-2" />
+          Get compusophy Signer
+        </Button>
       </div>
     );
   }
 
-  // Show nothing when not connected
+  // Show connect button when not connected
   if (!isConnected) {
-    return null;
+    return (
+      <div className="space-y-6">
+        <Button
+          onClick={() => connect({ connector: connectors[0] })}
+          variant="default"
+          size="lg"
+          className="w-full"
+        >
+          <PenTool className="h-4 w-4 mr-2" />
+          Connect Wallet
+        </Button>
+      </div>
+    );
   }
 
   // Render the main app with signer data

@@ -13,6 +13,6 @@ export const config = createConfig({
     [sepolia.id]: http(),
     [base.id]: http(),
   },
-  // Disable storage to prevent IndexedDB usage
-  storage: null,
+  // Enable auto-connection for better UX
+  ssr: false,
 }); 

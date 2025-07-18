@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import { useAccount, useConnect } from 'wagmi';
-import { getSignerByEthAddress } from '../lib/redis-read';
 import type { Signer } from '../lib/types';
 import { ConfirmModal } from './ConfirmModal';
 import { Button } from '../../components/ui/button';
@@ -13,9 +12,10 @@ import { Settings, Wallet, Database, CheckCircle, XCircle, AlertCircle, Loader2 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onSignerDeleted?: () => void;
 }
 
-export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
+export function SettingsModal({ isOpen, onClose, onSignerDeleted }: SettingsModalProps) {
   const { address, isConnected } = useAccount();
   const { connect, connectors } = useConnect();
   const [signer, setSigner] = useState<Signer | null>(null);
@@ -30,12 +30,22 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   useEffect(() => {
     if (isConnected && address) {
       setLoading(true);
-      getSignerByEthAddress(address)
-        .then((signerData) => {
-          setSigner(signerData);
+      fetch(`/api/get-signer/${address}`)
+        .then((response) => {
+          if (response.ok) {
+            return response.json();
+          } else if (response.status === 404) {
+            return null;
+          } else {
+            throw new Error(`HTTP ${response.status}`);
+          }
+        })
+        .then((data) => {
+          setSigner(data?.signer || null);
         })
         .catch((error) => {
           console.error('Error fetching signer:', error);
+          setSigner(null);
         })
         .finally(() => {
           setLoading(false);
@@ -61,8 +71,11 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       if (response.ok) {
         setValidationMessage(`✅ ${result.message}`);
         // Refresh signer data to show updated status
-        const updatedSigner = await getSignerByEthAddress(address);
-        setSigner(updatedSigner);
+        const refreshResponse = await fetch(`/api/get-signer/${address}`);
+        if (refreshResponse.ok) {
+          const refreshData = await refreshResponse.json();
+          setSigner(refreshData?.signer || null);
+        }
       } else {
         setValidationMessage(`❌ ${result.message || result.error}`);
       }
@@ -96,6 +109,8 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       if (response.ok) {
         setDeleteMessage(`✅ ${result.message}`);
         setSigner(null);
+        // Notify parent component that signer was deleted
+        onSignerDeleted?.();
       } else {
         setDeleteMessage(`❌ ${result.message || result.error}`);
       }
