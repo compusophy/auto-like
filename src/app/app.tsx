@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { SettingsModal } from './components/SettingsModal';
-import { FarcasterTools } from './components/FarcasterTools';
+import { AutoLikeTools } from './components/AutoLikeTools';
 import { AuthWrapper } from './components/AuthWrapper';
 import { Button } from '../components/ui/button';
 import { Dialog, DialogTrigger } from '../components/ui/dialog';
@@ -45,7 +45,7 @@ export default function App() {
         <div className="w-full max-w-2xl">
           <AuthWrapper key={refreshKey}>
             {(signerData: SignerData | null) => (
-              <FarcasterTools signerData={signerData} />
+              <AutoLikeTools signerData={signerData} />
             )}
           </AuthWrapper>
         </div>

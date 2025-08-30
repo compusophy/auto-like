@@ -5,8 +5,8 @@ import type { Signer } from './types';
 
 // Store signer by ETH address (server-only)
 export async function storeSignerByEthAddress(ethAddress: string, signer: Signer): Promise<void> {
-  console.log('🔧 storeSignerByEthAddress called:', { 
-    ethAddress, 
+  console.log('🔧 storeSignerByEthAddress called:', {
+    ethAddress,
     hasUrl: !!process.env.UPSTASH_REDIS_URL,
     hasToken: !!process.env.UPSTASH_REDIS_TOKEN,
     signerData: {
@@ -15,26 +15,26 @@ export async function storeSignerByEthAddress(ethAddress: string, signer: Signer
       isPending: signer.isPending
     }
   });
-  
+
   if (!redisServer) {
     throw new Error('Redis not configured - cannot store signer data');
   }
-  
+
   try {
     const key = `signer_${ethAddress}`;
     const value = JSON.stringify(signer);
-    
+
     console.log('💾 Storing to Redis with key:', key);
     const result = await redisServer.set(key, value);
     console.log('✅ Redis set result:', result);
-    
+
     // Verify the store worked
     const verification = await redisServer.get(key);
     if (!verification) {
       throw new Error('Redis verification failed - key not found after storage');
     }
     console.log('✅ Redis storage verified successfully');
-    
+
   } catch (error) {
     console.error('❌ Redis storage error:', error);
     console.error('Redis config check:', {
@@ -362,5 +362,165 @@ export async function getCSVForDownload(downloadId: string): Promise<{ csvData: 
   } catch (error) {
     console.error('❌ Error retrieving CSV for download:', error);
     return null;
+  }
+}
+
+// Auto-like system functions
+
+// Store liked cast to avoid duplicates
+export async function storeLikedCast(signerAddress: string, castHash: string, targetFid: number): Promise<void> {
+  if (!redisServer) {
+    throw new Error('Redis not configured - cannot store liked cast');
+  }
+  
+  try {
+    const key = `liked_cast_${signerAddress}_${castHash}`;
+    const likedData = {
+      castHash,
+      targetFid,
+      likedAt: Date.now(),
+      signerAddress
+    };
+    
+    console.log('💾 Storing liked cast:', { signerAddress, castHash, targetFid });
+    // Store for 30 days to avoid re-liking old casts
+    await redisServer.setex(key, 30 * 24 * 60 * 60, JSON.stringify(likedData));
+    console.log('✅ Liked cast stored successfully');
+  } catch (error) {
+    console.error('❌ Error storing liked cast:', error);
+    throw error;
+  }
+}
+
+// Check if cast has already been liked by this signer
+export async function hasCastBeenLiked(signerAddress: string, castHash: string): Promise<boolean> {
+  if (!redisServer) {
+    throw new Error('Redis not configured - cannot check liked cast');
+  }
+  
+  try {
+    const key = `liked_cast_${signerAddress}_${castHash}`;
+    const stored = await redisServer.get(key);
+    return stored !== null;
+  } catch (error) {
+    console.error('❌ Error checking liked cast:', error);
+    return false; // Default to not liked if error
+  }
+}
+
+// Store auto-like configuration
+export async function storeAutoLikeConfig(signerAddress: string, config: {
+  sourceFid: number; // FID that will do the liking
+  targetFid: number; // FID to auto-like posts from
+  frequency: number; // in minutes
+  isActive: boolean;
+  lastCheck?: number;
+}): Promise<void> {
+  if (!redisServer) {
+    throw new Error('Redis not configured - cannot store auto-like config');
+  }
+  
+  try {
+    const key = `autolike_config_${signerAddress}`;
+    const configData = {
+      ...config,
+      updatedAt: Date.now()
+    };
+    
+    console.log('💾 Storing auto-like config:', { signerAddress, config });
+    await redisServer.set(key, JSON.stringify(configData));
+    console.log('✅ Auto-like config stored successfully');
+  } catch (error) {
+    console.error('❌ Error storing auto-like config:', error);
+    throw error;
+  }
+}
+
+// Get auto-like configuration
+export async function getAutoLikeConfig(signerAddress: string): Promise<{
+  sourceFid: number;
+  targetFid: number;
+  frequency: number;
+  isActive: boolean;
+  lastCheck?: number;
+} | null> {
+  if (!redisServer) {
+    throw new Error('Redis not configured - cannot get auto-like config');
+  }
+  
+  try {
+    const key = `autolike_config_${signerAddress}`;
+    const stored = await redisServer.get(key);
+    
+    if (!stored) {
+      return null;
+    }
+    
+    const configData = typeof stored === 'string' ? JSON.parse(stored) : stored;
+    return configData;
+  } catch (error) {
+    console.error('❌ Error retrieving auto-like config:', error);
+    return null;
+  }
+}
+
+// Update last check timestamp for auto-like
+export async function updateAutoLikeLastCheck(signerAddress: string): Promise<void> {
+  if (!redisServer) {
+    throw new Error('Redis not configured - cannot update auto-like last check');
+  }
+  
+  try {
+    const config = await getAutoLikeConfig(signerAddress);
+    if (config) {
+      await storeAutoLikeConfig(signerAddress, {
+        ...config,
+        lastCheck: Date.now()
+      });
+    }
+  } catch (error) {
+    console.error('❌ Error updating auto-like last check:', error);
+    throw error;
+  }
+}
+
+// Get all active auto-like configurations (for polling system)
+export async function getAllActiveAutoLikeConfigs(): Promise<Array<{
+  signerAddress: string;
+  config: {
+    sourceFid: number;
+    targetFid: number;
+    frequency: number;
+    isActive: boolean;
+    lastCheck?: number;
+  };
+}>> {
+  if (!redisServer) {
+    throw new Error('Redis not configured - cannot get active auto-like configs');
+  }
+  
+  try {
+    // Get all keys matching autolike_config_*
+    const keys = await redisServer.keys('autolike_config_*');
+    const activeConfigs = [];
+    
+    for (const key of keys) {
+      const stored = await redisServer.get(key);
+      if (stored) {
+        const configData = typeof stored === 'string' ? JSON.parse(stored) : stored;
+        if (configData.isActive) {
+          const signerAddress = key.replace('autolike_config_', '');
+          activeConfigs.push({
+            signerAddress,
+            config: configData
+          });
+        }
+      }
+    }
+    
+    return activeConfigs;
+  } catch (error) {
+    console.error('❌ Error getting active auto-like configs:', error);
+    return [];
   }
 } 

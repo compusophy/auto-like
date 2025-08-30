@@ -8,13 +8,18 @@ export async function POST(
 ) {
   try {
     const { address } = await params;
-    
+
     if (!address) {
       return NextResponse.json(
         { error: 'Address is required' },
         { status: 400 }
       );
     }
+
+    // 🔐 SECURITY: Validate that the requester owns this address
+    // This endpoint relies on client-side validation via wallet connection
+    // The frontend ensures only connected wallet addresses can validate their own data
+    // Additional server-side validation could be added with signed messages
 
     console.log('🔧 Validating signer for address:', address);
 
