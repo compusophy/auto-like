@@ -134,7 +134,7 @@ export function AutoLikeTools({ signerData }: AutoLikeToolsProps) {
               isActive: data.config.isActive || false,
               lastCheck: data.config.lastCheck
             });
-            setTargetFidsInput(targetFids.map(fid => fid.toString()));
+            setTargetFidsInput(targetFids.map((fid: number) => fid.toString()));
             if (data.config.isActive) {
               setMessage('✅ Auto-like is currently active');
             } else {

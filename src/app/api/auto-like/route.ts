@@ -31,6 +31,10 @@ interface AutoLikeConfig {
 // Fetch recent casts for a specific FID
 async function fetchRecentCasts(fid: number, limit: number = 10): Promise<any[]> {
   try {
+    if (!NEYNAR_API_KEY) {
+      throw new Error('NEYNAR_API_KEY not configured');
+    }
+
     const url = `${NEYNAR_API_URL}?fid=${fid}&limit=${limit}`;
 
     const response = await fetch(url, {
@@ -101,10 +105,14 @@ async function addLikeReaction(
 
     // Encode the message to binary
     const messageBytes = Buffer.from(Message.encode(message).finish());
-    
+
+    if (!NEYNAR_API_KEY) {
+      throw new Error('NEYNAR_API_KEY not configured');
+    }
+
     // Use Neynar's HTTP API
     const neynarEndpoint = 'https://hub-api.neynar.com/v1/submitMessage';
-    
+
     const response = await fetch(neynarEndpoint, {
       method: 'POST',
       headers: {
@@ -152,63 +160,69 @@ async function processAutoLikes(signerAddress: string, config: AutoLikeConfig): 
       return results;
     }
 
-    // Skip if source FID is the same as target (can't like your own casts)
-    if (config.sourceFid === config.targetFid) {
-      console.log(`⏭️ Skipping auto-like - source FID ${config.sourceFid} same as target FID ${config.targetFid}`);
-      return results;
-    }
+    // Process each target FID
+    for (const targetFid of config.targetFids) {
+      // Skip if source FID is the same as target (can't like your own casts)
+      if (config.sourceFid === targetFid) {
+        console.log(`⏭️ Skipping auto-like - source FID ${config.sourceFid} same as target FID ${targetFid}`);
+        continue;
+      }
 
-    console.log(`🔍 Processing auto-likes for source FID ${config.sourceFid} targeting FID ${config.targetFid}`);
+      console.log(`🔍 Processing auto-likes for source FID ${config.sourceFid} targeting FID ${targetFid}`);
 
-    // Fetch recent casts from target FID
-    const casts = await fetchRecentCasts(config.targetFid, 10);
+      // Fetch recent casts from target FID
+      const casts = await fetchRecentCasts(targetFid, 10);
     
-    if (casts.length === 0) {
-      console.log(`📭 No recent casts found for FID ${config.targetFid}`);
-      return results;
-    }
+      if (casts.length === 0) {
+        console.log(`📭 No recent casts found for FID ${targetFid}`);
+        continue;
+      }
 
-    console.log(`📋 Found ${casts.length} recent casts from FID ${config.targetFid}`);
+      console.log(`📋 Found ${casts.length} recent casts from FID ${targetFid}`);
 
-    // Process each cast
-    for (const cast of casts) {
-      results.processed++;
-      
-      try {
-        // Check if we've already liked this cast
-        const alreadyLiked = await hasCastBeenLiked(signerAddress, cast.hash);
-        
-        if (alreadyLiked) {
-          console.log(`⏭️ Already liked cast ${cast.hash}, skipping`);
-          results.skipped++;
-          continue;
-        }
+      // Process each cast
+      for (const cast of casts) {
+        results.processed++;
 
-        // Add like reaction
-        const likeResult = await addLikeReaction(
-          config.sourceFid,
-          sourceSigner.privateKey,
-          cast.hash,
-          config.targetFid
-        );
+        try {
+          // Check if we've already liked this cast
+          const alreadyLiked = await hasCastBeenLiked(signerAddress, cast.hash);
 
-        if (likeResult.success) {
-          // Store that we liked this cast
-          await storeLikedCast(signerAddress, cast.hash, config.targetFid);
-          console.log(`✅ Successfully liked cast ${cast.hash} by FID ${config.targetFid}`);
-          results.liked++;
-        } else {
-          console.log(`❌ Failed to like cast ${cast.hash}: ${likeResult.error}`);
+          if (alreadyLiked) {
+            console.log(`⏭️ Already liked cast ${cast.hash}, skipping`);
+            results.skipped++;
+            continue;
+          }
+
+          // Add like reaction
+          const likeResult = await addLikeReaction(
+            config.sourceFid,
+            sourceSigner.privateKey,
+            cast.hash,
+            targetFid
+          );
+
+          if (likeResult.success) {
+            // Store that we liked this cast
+            await storeLikedCast(signerAddress, cast.hash, targetFid);
+            console.log(`✅ Successfully liked cast ${cast.hash} by FID ${targetFid}`);
+            results.liked++;
+          } else {
+            console.log(`❌ Failed to like cast ${cast.hash}: ${likeResult.error}`);
+            results.errors++;
+          }
+
+          // Add small delay between likes
+          await new Promise(resolve => setTimeout(resolve, 300));
+
+        } catch (error) {
+          console.error(`❌ Error processing cast ${cast.hash}:`, error);
           results.errors++;
         }
-
-        // Add small delay between likes
-        await new Promise(resolve => setTimeout(resolve, 300));
-
-      } catch (error) {
-        console.error(`❌ Error processing cast ${cast.hash}:`, error);
-        results.errors++;
       }
+
+      // Add delay between target FIDs
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
     // Update last check timestamp
@@ -434,6 +448,17 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    // Handle migration from old targetFid to new targetFids format
+    const correctedConfig = config as any;
+    if (correctedConfig.targetFid && !correctedConfig.targetFids) {
+      correctedConfig.targetFids = [correctedConfig.targetFid];
+      delete correctedConfig.targetFid;
+
+      // Update stored config with new format
+      await storeAutoLikeConfig(signerAddress, correctedConfig);
+      console.log('✅ Migrated config from targetFid to targetFids format');
+    }
+
     // Validate that stored config source FID matches authenticated user's FID
     if (config.sourceFid !== parseInt(fid)) {
       console.warn(`Config source FID ${config.sourceFid} doesn't match authenticated FID ${fid}, correcting...`);
@@ -474,12 +499,24 @@ export async function PUT(request: NextRequest) {
     }
 
     const config = await getAutoLikeConfig(signerAddress);
-    if (!config || !config.isActive) {
+
+    // Handle migration from old targetFid to new targetFids format
+    const correctedConfig = config as any;
+    if (correctedConfig && correctedConfig.targetFid && !correctedConfig.targetFids) {
+      correctedConfig.targetFids = [correctedConfig.targetFid];
+      delete correctedConfig.targetFid;
+
+      // Update stored config with new format
+      await storeAutoLikeConfig(signerAddress, correctedConfig);
+      console.log('✅ Migrated config from targetFid to targetFids format');
+    }
+
+    if (!correctedConfig || !correctedConfig.isActive) {
       return NextResponse.json({ error: 'Auto-like not active for this signer' }, { status: 400 });
     }
 
     console.log(`🔄 Manual trigger for auto-like: ${signerAddress}`);
-    const results = await processAutoLikes(signerAddress, config);
+    const results = await processAutoLikes(signerAddress, correctedConfig);
 
     return NextResponse.json({
       success: true,

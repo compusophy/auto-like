@@ -411,7 +411,7 @@ export async function hasCastBeenLiked(signerAddress: string, castHash: string):
 // Store auto-like configuration
 export async function storeAutoLikeConfig(signerAddress: string, config: {
   sourceFid: number; // FID that will do the liking
-  targetFid: number; // FID to auto-like posts from
+  targetFids: number[]; // FIDs to auto-like posts from
   frequency: number; // in minutes
   isActive: boolean;
   lastCheck?: number;
@@ -439,7 +439,7 @@ export async function storeAutoLikeConfig(signerAddress: string, config: {
 // Get auto-like configuration
 export async function getAutoLikeConfig(signerAddress: string): Promise<{
   sourceFid: number;
-  targetFid: number;
+  targetFids: number[];
   frequency: number;
   isActive: boolean;
   lastCheck?: number;

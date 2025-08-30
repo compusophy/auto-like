@@ -97,9 +97,13 @@ async function addLikeReaction(
     // Encode the message to binary
     const messageBytes = Buffer.from(Message.encode(message).finish());
     
+    if (!NEYNAR_API_KEY) {
+      throw new Error('NEYNAR_API_KEY not configured');
+    }
+
     // Use Neynar's HTTP API
     const neynarEndpoint = 'https://hub-api.neynar.com/v1/submitMessage';
-    
+
     const response = await fetch(neynarEndpoint, {
       method: 'POST',
       headers: {

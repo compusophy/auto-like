@@ -6,10 +6,10 @@ const NEYNAR_API_URL = 'https://api.neynar.com/v2/farcaster/feed/user/casts';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { fid: string } }
+  { params }: { params: Promise<{ fid: string }> }
 ) {
   try {
-    const fid = params.fid;
+    const { fid } = await params;
 
     if (!fid) {
       return NextResponse.json({ error: 'FID parameter is required' }, { status: 400 });
