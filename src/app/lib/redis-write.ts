@@ -383,8 +383,8 @@ export async function storeLikedCast(signerAddress: string, castHash: string, ta
     };
     
     console.log('💾 Storing liked cast:', { signerAddress, castHash, targetFid });
-    // Store for 30 days to avoid re-liking old casts
-    await redisServer.setex(key, 30 * 24 * 60 * 60, JSON.stringify(likedData));
+    // Store for 2 hours (since we only check last hour of casts, no need for longer)
+    await redisServer.setex(key, 2 * 60 * 60, JSON.stringify(likedData));
     console.log('✅ Liked cast stored successfully');
   } catch (error) {
     console.error('❌ Error storing liked cast:', error);
@@ -498,12 +498,12 @@ export async function getAllActiveAutoLikeConfigs(): Promise<Array<{
   if (!redisServer) {
     throw new Error('Redis not configured - cannot get active auto-like configs');
   }
-  
+
   try {
     // Get all keys matching autolike_config_*
     const keys = await redisServer.keys('autolike_config_*');
     const activeConfigs = [];
-    
+
     for (const key of keys) {
       const stored = await redisServer.get(key);
       if (stored) {
@@ -517,10 +517,80 @@ export async function getAllActiveAutoLikeConfigs(): Promise<Array<{
         }
       }
     }
-    
+
     return activeConfigs;
   } catch (error) {
     console.error('❌ Error getting active auto-like configs:', error);
     return [];
+  }
+}
+
+// Cleanup old liked casts (manual maintenance function)
+export async function cleanupOldLikedCasts(olderThanHours: number = 3): Promise<{ deleted: number }> {
+  if (!redisServer) {
+    throw new Error('Redis not configured - cannot cleanup liked casts');
+  }
+
+  try {
+    const cutoffTime = Date.now() - (olderThanHours * 60 * 60 * 1000);
+    let deleted = 0;
+
+    // Get all liked cast keys
+    const keys = await redisServer.keys('liked_cast_*');
+
+    for (const key of keys) {
+      const stored = await redisServer.get(key);
+      if (stored) {
+        const likedData = typeof stored === 'string' ? JSON.parse(stored) : stored;
+        if (likedData.likedAt && likedData.likedAt < cutoffTime) {
+          await redisServer.del(key);
+          deleted++;
+        }
+      }
+    }
+
+    console.log(`🧹 Cleaned up ${deleted} liked casts older than ${olderThanHours} hours`);
+    return { deleted };
+  } catch (error) {
+    console.error('❌ Error cleaning up liked casts:', error);
+    return { deleted: 0 };
+  }
+}
+
+// Get database statistics for monitoring
+export async function getDatabaseStats(): Promise<{
+  totalKeys: number;
+  likedCasts: number;
+  autoLikeConfigs: number;
+  signers: number;
+  backups: number;
+}> {
+  if (!redisServer) {
+    throw new Error('Redis not configured - cannot get database stats');
+  }
+
+  try {
+    const allKeys = await redisServer.keys('*');
+    const likedCasts = allKeys.filter(key => key.startsWith('liked_cast_')).length;
+    const autoLikeConfigs = allKeys.filter(key => key.startsWith('autolike_config_')).length;
+    const signers = allKeys.filter(key => key.startsWith('signer_')).length;
+    const backups = allKeys.filter(key => key.startsWith('backup_')).length;
+
+    return {
+      totalKeys: allKeys.length,
+      likedCasts,
+      autoLikeConfigs,
+      signers,
+      backups
+    };
+  } catch (error) {
+    console.error('❌ Error getting database stats:', error);
+    return {
+      totalKeys: 0,
+      likedCasts: 0,
+      autoLikeConfigs: 0,
+      signers: 0,
+      backups: 0
+    };
   }
 } 

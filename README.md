@@ -17,7 +17,7 @@ Create `.env.local`:
 NEYNAR_API_KEY=your_key_here
 UPSTASH_REDIS_URL=your_redis_url
 UPSTASH_REDIS_TOKEN=your_redis_token
-NEXT_PUBLIC_APP_URL=http://localhost:3000
+NEXT_PUBLIC_URL=http://localhost:3000
 ```
 
 ## Deploy

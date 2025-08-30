@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { 
-  storeAutoLikeConfig, 
-  getAutoLikeConfig, 
+import {
+  storeAutoLikeConfig,
+  getAutoLikeConfig,
   getAllActiveAutoLikeConfigs,
   updateAutoLikeLastCheck,
   hasCastBeenLiked,
   storeLikedCast
 } from '../../lib/redis-write';
 import { getSignerByEthAddress, getSignerByFid } from '../../lib/redis-read';
+import { validateSigner } from '../../lib/signer-validation';
 import { 
   NobleEd25519Signer, 
   makeReactionAdd,
@@ -296,7 +297,7 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // 🔐 SECURITY: Validate signer exists and is validated using the passed FID
+    // 🔐 SECURITY: Validate signer exists
     const signer = await getSignerByEthAddress(signerAddress);
     if (!signer) {
       console.warn('🚨 SECURITY: Signer not found for address:', signerAddress.substring(0, 10) + '...');
@@ -309,9 +310,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid signer data' }, { status: 500 });
     }
 
+    // 🔄 AUTO-VALIDATE: If signer is not validated, validate it automatically
     if (!signer.isValidated) {
-      console.warn('🚨 SECURITY: Unvalidated signer access attempt for address:', signerAddress.substring(0, 10) + '...');
-      return NextResponse.json({ error: 'Signer is not validated' }, { status: 403 });
+      console.log('🔄 Signer not validated, attempting automatic validation...');
+
+      const validationResult = await validateSigner(signerAddress);
+
+      if (!validationResult.isValid) {
+        console.warn('🚨 SECURITY: Automatic signer validation failed:', validationResult.message);
+        return NextResponse.json({
+          error: `Signer validation failed: ${validationResult.message}`,
+          needsManualValidation: true
+        }, { status: 403 });
+      }
+
+      console.log('✅ Automatic signer validation successful:', validationResult.message);
+
+      // Re-fetch the signer to get updated validation status
+      const updatedSigner = await getSignerByEthAddress(signerAddress);
+      if (!updatedSigner || !updatedSigner.isValidated) {
+        console.warn('🚨 SECURITY: Signer still not validated after automatic validation');
+        return NextResponse.json({ error: 'Signer validation failed' }, { status: 403 });
+      }
+
+      // Use the updated signer for the rest of the logic
+      Object.assign(signer, updatedSigner);
     }
 
     // 🔐 SECURITY: Verify the passed FID matches the signer's FID
@@ -333,7 +356,7 @@ export async function POST(request: NextRequest) {
     await storeAutoLikeConfig(signerAddress, {
       sourceFid: sourceFid || 350911, // Default to 350911 as requested
       targetFids: targetFids || [350911], // Default to 350911 as requested
-      frequency: frequency || 1, // Default to 1 minute
+      frequency: frequency || 5, // Default to 5 minutes
       isActive,
       lastCheck: Date.now()
     });
@@ -344,7 +367,7 @@ export async function POST(request: NextRequest) {
       config: {
         sourceFid: sourceFid || 350911,
         targetFids: targetFids || [350911],
-        frequency: frequency || 1,
+        frequency: frequency || 5,
         isActive,
         lastCheck: Date.now()
       }

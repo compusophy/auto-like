@@ -7,7 +7,7 @@
 
 const fetch = require('node-fetch');
 
-const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+const BASE_URL = process.env.NEXT_PUBLIC_URL || 'http://localhost:3000';
 
 // Simulate different cron schedules
 const schedules = [

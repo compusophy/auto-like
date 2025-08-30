@@ -24,10 +24,10 @@ export async function GET(
       return NextResponse.json({ error: 'NEYNAR_API_KEY not configured' }, { status: 500 });
     }
 
-    console.log(`Fetching 100 most recent casts for FID ${fidNumber}...`);
+    console.log(`Fetching 5 most recent top-level casts for FID ${fidNumber}...`);
 
-    // Fetch casts from Neynar API
-    const url = `${NEYNAR_API_URL}?fid=${fidNumber}&limit=100`;
+    // Fetch casts from Neynar API (only top-level casts, no replies)
+    const url = `${NEYNAR_API_URL}?fid=${fidNumber}&limit=5&include_replies=false`;
 
     const response = await fetch(url, {
       headers: {

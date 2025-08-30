@@ -32,6 +32,17 @@ NEYNAR_API_KEY=your_neynar_api_key_here
 1. Go to [Neynar Console](https://neynar.com/)
 2. Create an account and get your API key
 
+## Production Deployment Environment Variables
+
+For Vercel deployment, you also need to set these environment variables in your Vercel dashboard:
+
+- `NEXT_PUBLIC_URL`: Your deployed Vercel URL (e.g., `https://your-app-name.vercel.app`)
+- `NEYNAR_API_KEY`: Your Neynar API key
+- `UPSTASH_REDIS_URL`: Your Upstash Redis URL
+- `UPSTASH_REDIS_TOKEN`: Your Upstash Redis token
+- `NEXT_PUBLIC_UPSTASH_REDIS_URL`: Your Upstash Redis URL (public)
+- `NEXT_PUBLIC_UPSTASH_REDIS_READ_TOKEN`: Your Upstash Redis read token
+
 ## After Setup
 1. Save the `.env.local` file
 2. Restart your development server: `npm run dev`

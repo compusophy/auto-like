@@ -6,7 +6,7 @@ export async function GET(request: NextRequest) {
     console.log('🕐 Cron job triggered for auto-like polling');
     
     // Call the auto-like polling endpoint
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const baseUrl = process.env.NEXT_PUBLIC_URL || 'http://localhost:3000';
     
     const response = await fetch(`${baseUrl}/api/auto-like-poll`, {
       method: 'POST',

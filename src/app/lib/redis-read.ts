@@ -44,7 +44,7 @@ export async function getSigner(fid: string): Promise<Signer | null> {
   }
 }
 
-// Get signer by FID (searches through existing signers without modifying database)
+// Get signer by FID (searches through all existing signers)
 export async function getSignerByFid(fid: number): Promise<{ signer: Signer; ethAddress: string } | null> {
   console.log('getSignerByFid called for fid:', fid);
 
@@ -54,16 +54,27 @@ export async function getSignerByFid(fid: number): Promise<{ signer: Signer; eth
   }
 
   try {
-    // Since we can't use KEYS command, we need to try known addresses
-    // This is a simple brute-force approach for finding existing signers
-    const knownAddresses = [
-      '0x1964923A14701B45F2e36Ff39FB19F40749Eb011', // User's known working address
-      // Add more known addresses as needed
-    ];
+    // Use SCAN to find all signer keys (more reliable than hardcoded list)
+    const signerKeys = [];
+    let cursor = '0';
 
-    for (const address of knownAddresses) {
+    do {
+      const [newCursor, keys] = await redisReadOnly.scan(cursor, {
+        match: 'signer_*',
+        count: 100
+      });
+      cursor = newCursor;
+      signerKeys.push(...keys);
+
+      // Limit to prevent infinite loops
+      if (signerKeys.length > 1000) break;
+    } while (cursor !== '0');
+
+    console.log(`Scanning ${signerKeys.length} signer keys for FID ${fid}`);
+
+    // Search through all signer keys
+    for (const signerKey of signerKeys) {
       try {
-        const signerKey = `signer_${address}`;
         const stored = await redisReadOnly.get(signerKey);
 
         if (stored) {
@@ -72,38 +83,18 @@ export async function getSignerByFid(fid: number): Promise<{ signer: Signer; eth
 
           // Check if this signer has the requested FID
           if (signer.fid && parseInt(signer.fid) === fid) {
-            console.log(`Found signer for FID ${fid} at address ${address}`);
-            return { signer, ethAddress: address };
+            const ethAddress = signerKey.replace('signer_', '');
+            console.log(`✅ Found signer for FID ${fid} at address ${ethAddress}`);
+            return { signer, ethAddress };
           }
         }
       } catch (error) {
-        // Continue to next address
+        // Continue to next signer
+        console.log(`⚠️ Error parsing signer ${signerKey}:`, error instanceof Error ? error.message : String(error));
       }
     }
 
-    // If we don't find it in known addresses, try some common patterns
-    // This is just a fallback and may not work for all cases
-    for (let i = 0; i < 100; i++) {
-      const address = `0x${i.toString().padStart(40, '0')}`;
-      try {
-        const signerKey = `signer_${address}`;
-        const stored = await redisReadOnly.get(signerKey);
-
-        if (stored) {
-          const parsed = typeof stored === 'string' ? JSON.parse(stored) : stored;
-          const signer = parsed as Signer;
-
-          if (signer.fid && parseInt(signer.fid) === fid) {
-            console.log(`Found signer for FID ${fid} at address ${address}`);
-            return { signer, ethAddress: address };
-          }
-        }
-      } catch (error) {
-        // Continue
-      }
-    }
-
-    console.log(`No signer found for FID ${fid}`);
+    console.log(`❌ No signer found for FID ${fid} after scanning ${signerKeys.length} keys`);
     return null;
   } catch (error) {
     console.error('Error finding signer by FID:', error);

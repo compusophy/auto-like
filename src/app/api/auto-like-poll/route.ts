@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { 
+import {
   getAllActiveAutoLikeConfigs,
   updateAutoLikeLastCheck,
   hasCastBeenLiked,
-  storeLikedCast
+  storeLikedCast,
+  cleanupOldLikedCasts,
+  getDatabaseStats,
+  getAutoLikeConfig,
+  storeAutoLikeConfig
 } from '../../lib/redis-write';
 import { getSignerByEthAddress, getSignerByFid } from '../../lib/redis-read';
 import { 
@@ -19,15 +23,74 @@ import { hexToBytes } from '@noble/hashes/utils';
 const NEYNAR_API_KEY = process.env.NEYNAR_API_KEY;
 const NEYNAR_API_URL = 'https://api.neynar.com/v2/farcaster/feed/user/casts';
 
-// Fetch recent casts for a specific FID
+// Global in-memory cache for this polling cycle (cleared after each cycle)
+let pollingCycleCache: Map<number, any[]> = new Map();
+
+// Track failed attempts per signer to deactivate after consecutive failures
+let failureTracker: Map<string, { count: number; lastFailure: number }> = new Map();
+
+// Constants for failure handling
+const MAX_CONSECUTIVE_FAILURES = 3;
+const FAILURE_RESET_TIME = 24 * 60 * 60 * 1000; // 24 hours
+
+// Track and handle failed attempts
+async function trackFailure(signerAddress: string): Promise<boolean> {
+  const now = Date.now();
+  const current = failureTracker.get(signerAddress) || { count: 0, lastFailure: 0 };
+
+  // Reset count if it's been more than 24 hours since last failure
+  if (now - current.lastFailure > FAILURE_RESET_TIME) {
+    current.count = 0;
+  }
+
+  current.count++;
+  current.lastFailure = now;
+  failureTracker.set(signerAddress, current);
+
+  // If too many consecutive failures, deactivate the user
+  if (current.count >= MAX_CONSECUTIVE_FAILURES) {
+    console.log(`🚨 Too many failures for ${signerAddress} (${current.count} failures), deactivating...`);
+
+    try {
+      const config = await getAutoLikeConfig(signerAddress);
+      if (config) {
+        await storeAutoLikeConfig(signerAddress, {
+          ...config,
+          isActive: false
+        });
+        console.log(`✅ Deactivated auto-like for ${signerAddress} due to consecutive failures`);
+      }
+      return true; // User was deactivated
+    } catch (error) {
+      console.error(`❌ Failed to deactivate ${signerAddress}:`, error);
+    }
+  }
+
+  return false; // User not deactivated
+}
+
+// Clear failure count on successful operation
+function clearFailures(signerAddress: string) {
+  failureTracker.delete(signerAddress);
+}
+
+// Fetch recent casts for a specific FID (with caching)
 async function fetchRecentCasts(fid: number, limit: number = 10): Promise<any[]> {
+  // Check cache first
+  if (pollingCycleCache.has(fid)) {
+    console.log(`📋 Using cached casts for FID ${fid}`);
+    return pollingCycleCache.get(fid)!;
+  }
+
   try {
     if (!NEYNAR_API_KEY) {
       throw new Error('NEYNAR_API_KEY not configured');
     }
 
-    const url = `${NEYNAR_API_URL}?fid=${fid}&limit=${limit}`;
+    // Updated to match the fetch-casts API endpoint (only top-level casts)
+    const url = `${NEYNAR_API_URL}?fid=${fid}&limit=${limit}&include_replies=false`;
 
+    console.log(`🌐 Fetching casts for FID ${fid} from Neynar API`);
     const response = await fetch(url, {
       headers: {
         'accept': 'application/json',
@@ -41,7 +104,13 @@ async function fetchRecentCasts(fid: number, limit: number = 10): Promise<any[]>
     }
 
     const data = await response.json();
-    return data.casts || [];
+    const casts = data.casts || [];
+
+    // Store in cache for this polling cycle
+    pollingCycleCache.set(fid, casts);
+    console.log(`💾 Cached ${casts.length} casts for FID ${fid}`);
+
+    return casts;
   } catch (error) {
     console.error(`Error fetching casts for FID ${fid}:`, error);
     return [];
@@ -167,10 +236,12 @@ async function processAutoLikes(signerAddress: string, config: any): Promise<{
       return results;
     }
 
+    let hasAnySuccess = false;
+
     for (const targetFid of config.targetFids) {
       console.log(`🎯 Checking target FID ${targetFid}...`);
 
-      // Fetch recent casts from this target FID
+      // Fetch recent casts from this target FID (now cached!)
       const casts = await fetchRecentCasts(targetFid, 5); // Limit to 5 most recent per FID
 
       if (casts.length === 0) {
@@ -217,6 +288,7 @@ async function processAutoLikes(signerAddress: string, config: any): Promise<{
             await storeLikedCast(signerAddress, cast.hash, targetFid);
             console.log(`✅ Successfully auto-liked new cast ${cast.hash} by FID ${targetFid}`);
             results.liked++;
+            hasAnySuccess = true;
           } else {
             console.log(`❌ Failed to like cast ${cast.hash}: ${likeResult.error}`);
             results.errors++;
@@ -238,8 +310,24 @@ async function processAutoLikes(signerAddress: string, config: any): Promise<{
     // Update last check timestamp
     await updateAutoLikeLastCheck(signerAddress);
 
+    // Handle success/failure tracking
+    if (hasAnySuccess) {
+      clearFailures(signerAddress);
+      console.log(`✅ ${signerAddress} had successful operations, failure count reset`);
+    } else if (results.errors > 0) {
+      const wasDeactivated = await trackFailure(signerAddress);
+      if (wasDeactivated) {
+        console.log(`🚨 ${signerAddress} was deactivated due to consecutive failures`);
+      }
+    }
+
       } catch (error) {
       console.error(`❌ Error in processAutoLikes for ${signerAddress}:`, error);
+      // Track this as a failure
+      const wasDeactivated = await trackFailure(signerAddress);
+      if (wasDeactivated) {
+        console.log(`🚨 ${signerAddress} was deactivated due to error`);
+      }
     }
 
   // Log final summary
@@ -336,10 +424,16 @@ export async function POST(request: NextRequest) {
       totalErrors: results.totalErrors
     });
 
+    // Clear the polling cycle cache
+    const cachedFids = Array.from(pollingCycleCache.keys());
+    pollingCycleCache.clear();
+    console.log(`🧹 Cleared polling cycle cache (${cachedFids.length} FIDs: ${cachedFids.join(', ')})`);
+
     return NextResponse.json({
       success: true,
       message: 'Polling cycle completed',
-      results
+      results,
+      cacheCleared: cachedFids.length
     });
 
   } catch (error) {
@@ -348,11 +442,36 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Get polling status
+// Get polling status and maintenance options
 export async function GET(request: NextRequest) {
   try {
+    const url = new URL(request.url);
+    const action = url.searchParams.get('action');
+
+    if (action === 'stats') {
+      // Get database statistics
+      const stats = await getDatabaseStats();
+      return NextResponse.json({
+        success: true,
+        stats,
+        message: 'Database statistics retrieved'
+      });
+    }
+
+    if (action === 'cleanup') {
+      // Perform cleanup of old liked casts
+      const olderThanHours = parseInt(url.searchParams.get('hours') || '3');
+      const result = await cleanupOldLikedCasts(olderThanHours);
+      return NextResponse.json({
+        success: true,
+        cleanup: result,
+        message: `Cleaned up ${result.deleted} liked casts older than ${olderThanHours} hours`
+      });
+    }
+
+    // Default: Get polling status
     const activeConfigs = await getAllActiveAutoLikeConfigs();
-    
+
     return NextResponse.json({
       success: true,
       activeConfigs: activeConfigs.length,

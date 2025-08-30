@@ -2,7 +2,7 @@ import { Metadata } from "next";
 import App from "./app";
 
 const appUrl = process.env.NEXT_PUBLIC_URL || "http://localhost:3000";
-const frameName = process.env.NEXT_PUBLIC_FRAME_NAME || "compusophy signer";
+const frameName = process.env.NEXT_PUBLIC_FRAME_NAME || "auto-like";
 const imageRoute = process.env.NEXT_PUBLIC_IMAGE_ROUTE || "/image.png";
 const buttonTitle = process.env.NEXT_PUBLIC_BUTTON_TITLE || "launch";
 const splashRoute = process.env.NEXT_PUBLIC_SPLASH_ROUTE || "/splash.png";
