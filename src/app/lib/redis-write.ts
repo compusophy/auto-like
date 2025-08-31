@@ -22,7 +22,12 @@ export async function storeSignerByEthAddress(ethAddress: string, signer: Signer
 
   try {
     const key = `signer_${ethAddress}`;
-    const value = JSON.stringify(signer);
+    // Add creation timestamp to the signer data
+    const signerWithTimestamp = {
+      ...signer,
+      createdAt: signer.createdAt || Date.now()
+    };
+    const value = JSON.stringify(signerWithTimestamp);
 
     console.log('💾 Storing to Redis with key:', key);
     const result = await redisServer.set(key, value);
@@ -102,12 +107,13 @@ export async function completeSignerValidation(ethAddress: string, fid?: string)
       token: signer.token?.slice(0, 10) + '...'
     });
     
-    // Complete the validation process
-    const updatedSigner = { 
-      ...signer, 
-      isPending: false, 
+    // Complete the validation process (preserve createdAt timestamp)
+    const updatedSigner = {
+      ...signer,
+      isPending: false,
       isValidated: true,
-      fid: fid || signer.fid
+      fid: fid || signer.fid,
+      createdAt: signer.createdAt || Date.now() // Preserve original creation time
     };
     
     console.log('💾 Updating signer to:', {

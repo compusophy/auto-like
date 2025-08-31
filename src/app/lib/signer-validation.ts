@@ -1,5 +1,5 @@
 import { getSignerByEthAddress } from './redis-read';
-import { completeSignerValidation } from './redis-write';
+import { completeSignerValidation, deleteSignerByEthAddress } from './redis-write';
 import {
   NobleEd25519Signer,
   makeLinkAdd,
@@ -7,6 +7,24 @@ import {
   Message
 } from '@farcaster/hub-nodejs';
 import { hexToBytes } from '@noble/hashes/utils';
+
+// Helper function to check if a pending signer should be cleaned up
+async function shouldCleanupOldPendingSigner(signer: any): Promise<boolean> {
+  if (!signer.isPending || !signer.createdAt) {
+    return false;
+  }
+
+  const oneHourAgo = Date.now() - (60 * 60 * 1000); // 1 hour in milliseconds
+  return signer.createdAt < oneHourAgo;
+}
+
+// Helper function to cleanup old pending signer
+async function cleanupOldPendingSigner(address: string, signer: any): Promise<void> {
+  if (await shouldCleanupOldPendingSigner(signer)) {
+    console.log(`🧹 Cleaning up old pending signer for ${address} (created ${Math.round((Date.now() - signer.createdAt) / (60 * 1000))} minutes ago)`);
+    await deleteSignerByEthAddress(address);
+  }
+}
 
 // Shared signer validation function
 export async function validateSigner(address: string): Promise<{
@@ -25,6 +43,11 @@ export async function validateSigner(address: string): Promise<{
     if (!signer) {
       console.log('❌ No signer found in database for address:', address);
       return { isValid: false, message: 'No signer found for this address' };
+    }
+
+    // Check if this is an old pending signer that should be cleaned up
+    if (signer.isPending && !signer.isValidated) {
+      await cleanupOldPendingSigner(address, signer);
     }
 
     console.log('📋 Signer found in database:', {
@@ -47,6 +70,8 @@ export async function validateSigner(address: string): Promise<{
 
     if (!signer.token) {
       console.log('❌ No token found for signer, cannot validate');
+      // Cleanup old pending signer with no token
+      await cleanupOldPendingSigner(address, signer);
       return { isValid: false, message: 'No token found - cannot validate' };
     }
 
@@ -144,6 +169,8 @@ export async function validateSigner(address: string): Promise<{
                                errorText.toLowerCase().includes('unauthorized');
 
         if (isInvalidSigner) {
+          // Cleanup invalid signer
+          await cleanupOldPendingSigner(address, signer);
           return { isValid: false, message: 'Signer is invalid or not approved' };
         } else {
           return { isValid: false, message: `Test failed: ${errorText}` };
@@ -152,11 +179,22 @@ export async function validateSigner(address: string): Promise<{
 
     } catch (testError) {
       console.error('❌ Signer test error:', testError);
+      // Cleanup on test errors for old pending signers
+      await cleanupOldPendingSigner(address, signer);
       return { isValid: false, message: 'Failed to test signer' };
     }
 
   } catch (error) {
     console.error('❌ Signer validation error:', error);
+    // Try to cleanup old pending signer on general errors
+    try {
+      const signer = await getSignerByEthAddress(address);
+      if (signer) {
+        await cleanupOldPendingSigner(address, signer);
+      }
+    } catch (cleanupError) {
+      console.error('❌ Error during cleanup:', cleanupError);
+    }
     return { isValid: false, message: 'Internal server error' };
   }
 }
